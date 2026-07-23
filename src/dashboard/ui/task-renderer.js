@@ -36,9 +36,17 @@ function renderTaskCard(t) {
 
 function renderTaskList(tasks, filter) {
   const el = document.getElementById("task-list");
-  const filtered = filter === "all" ? tasks : tasks.filter(t => !["completed","cancelled"].includes(t.state));
+  let filtered;
+  if (filter === "all") {
+    filtered = tasks;
+  } else if (filter === "services") {
+    filtered = tasks.filter(t => window._servicePlugins?.has(t.plugin_name) && ["running","paused"].includes(t.state));
+  } else {
+    filtered = tasks.filter(t => !["completed","cancelled"].includes(t.state));
+  }
   if (filtered.length === 0) {
-    el.innerHTML = '<div style="padding:40px;text-align:center;color:var(--text2)">暂无' + (filter==="all"?"":"活跃") + '任务。通过对话面板提交任务。</div>';
+    const labels = { all: "", active: "活跃", services: "服务" };
+    el.innerHTML = '<div style="padding:40px;text-align:center;color:var(--text2)">暂无' + (labels[filter] || "") + '任务。通过对话面板提交任务。</div>';
     return;
   }
   el.innerHTML = filtered.map(t => renderTaskCard(t)).join("");

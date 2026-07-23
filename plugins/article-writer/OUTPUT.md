@@ -9,9 +9,8 @@ data/assets/articles/<YYYYMMDD>-<slug>.md
 文章格式：
 ---
 title: 文章标题
-topic: 原始主题
-style: 文章风格
 date: 2026-07-23
+maxWords: 2000
 ---
 # 标题
 

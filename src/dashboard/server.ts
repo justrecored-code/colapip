@@ -132,6 +132,34 @@ function getAgent(): Agent {
         return { content: [{ type: "text", text: `![${label || fp}](${url})` }], details: { url } };
       },
     },
+    { name: "read_file", label: "读取文件", description: "读取 data/ 目录下的文本文件",
+      parameters: Type.Object({ path: Type.String(), limit: Type.Optional(Type.Number()) }),
+      execute: async (_tid: string, raw: unknown) => {
+        const { path: fp, limit } = raw as { path: string; limit?: number };
+        const dataRoot = path.join(ROOT, "data");
+        const resolved = path.resolve(fp);
+        if (!resolved.startsWith(dataRoot)) return { content: [{ type: "text", text: `仅允许读取 data/ 目录: ${fp}` }], details: {} };
+        if (!fs.existsSync(resolved)) return { content: [{ type: "text", text: `文件不存在: ${fp}` }], details: {} };
+        const text = fs.readFileSync(resolved, "utf-8");
+        return { content: [{ type: "text", text: text.slice(0, limit || 5000) }], details: {} };
+      },
+    },
+    { name: "list_dir", label: "列出目录", description: "列出 data/ 目录下的文件和子目录",
+      parameters: Type.Object({ path: Type.String() }),
+      execute: async (_tid: string, raw: unknown) => {
+        const { path: fp } = raw as { path: string };
+        const dataRoot = path.join(ROOT, "data");
+        const resolved = path.resolve(fp);
+        if (!resolved.startsWith(dataRoot)) return { content: [{ type: "text", text: `仅允许列出 data/ 目录: ${fp}` }], details: {} };
+        if (!fs.existsSync(resolved)) return { content: [{ type: "text", text: `目录不存在: ${fp}` }], details: {} };
+        if (!fs.statSync(resolved).isDirectory()) return { content: [{ type: "text", text: `不是目录: ${fp}` }], details: {} };
+        const items = fs.readdirSync(resolved).map(name => {
+          try { const s = fs.statSync(path.join(resolved, name)); return s.isDirectory() ? `${name}/` : name; }
+          catch { return `${name} (不可访问)`; }
+        });
+        return { content: [{ type: "text", text: items.join("\n") || "(空目录)" }], details: {} };
+      },
+    },
     { name: "read_platform_doc", label: "读平台文档", description: "读取 README.md",
       parameters: Type.Object({}),
       execute: async () => {
@@ -208,9 +236,9 @@ function getAgent(): Agent {
 // ============================================================================
 
 app.get("/api/health", async (_req, res) => {
-  const ok = await getPlatformLLM().healthCheck();
   const adapter = getPlatformLLM() as any;
-  res.json({ ok, llm: ok ? "online" : "offline", queue: adapter.queueDepth ?? 0, processing: adapter.isProcessing ?? false });
+  const status = adapter.status ?? "online";
+  res.json({ ok: status === "online", llm: status, queue: adapter.queueDepth ?? 0, processing: adapter.isProcessing ?? false });
 });
 
 app.get("/api/plugins", (_req, res) => {
@@ -254,7 +282,7 @@ app.post("/api/tasks/:id/cancel", (req, res) => { pluginManager.cancelTask(req.p
 app.post("/api/tasks/:id/pause", (req, res) => { pluginManager.pauseTask(req.params.id); res.json({ ok: true }); });
 app.post("/api/tasks/:id/retry", (req, res) => { pluginManager.retryTask(req.params.id); res.json({ ok: true }); });
 
-// Get latest log for a plugin
+// Get latest log for a plugin (tail last 128KB max)
 app.get("/api/plugins/:name/log", (req, res) => {
   const logDir = path.join(ROOT, "logs", req.params.name);
   if (!fs.existsSync(logDir)) { res.status(404).send("no logs"); return; }
@@ -264,7 +292,16 @@ app.get("/api/plugins/:name/log", (req, res) => {
     return tb - ta;
   });
   if (logs.length === 0) { res.status(404).send("no logs"); return; }
-  res.sendFile(path.join(logDir, logs[0]!));
+  const fp = path.join(logDir, logs[0]!);
+  const stat = fs.statSync(fp);
+  const tailSize = 128 * 1024;
+  if (stat.size <= tailSize) { res.sendFile(fp); return; }
+  // Send last 128KB as text
+  const fd = fs.openSync(fp, "r");
+  const buf = Buffer.alloc(tailSize);
+  fs.readSync(fd, buf, 0, tailSize, stat.size - tailSize);
+  fs.closeSync(fd);
+  res.type("text/plain").send(buf.toString("utf-8"));
 });
 
 // Hot-reload a plugin without restarting the platform
@@ -342,6 +379,7 @@ app.post("/api/tasks", async (req, res) => {
       const replyJson = JSON.stringify(replyBlocks);
       saveChatMessage("assistant", replyJson);
 
+      getPlatformLLM().setStatus("online");
       res.json({ type: "chat", reply: replyJson });
       return;
     }
@@ -351,6 +389,7 @@ app.post("/api/tasks", async (req, res) => {
     res.json({ taskId: id });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
+    getPlatformLLM().setStatus("offline");
     res.status(500).json({ error: msg });
   }
 });

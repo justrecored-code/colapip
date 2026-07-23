@@ -34,7 +34,9 @@ interface ChatResult {
 export interface LLMAdapter {
   name: string;
   chat(params: ChatParams): Promise<ChatResult>;
-  healthCheck(): Promise<boolean>;
+  /** Passive status: "offline" until first success, "online" on success, "offline" on failure */
+  readonly status: "online" | "offline";
+  setStatus(s: "online" | "offline"): void;
 }
 
 // ============================================================================
@@ -47,6 +49,10 @@ export class OpenAICompatibleAdapter implements LLMAdapter {
   private pending: Promise<void> = Promise.resolve();
   private _queueDepth = 0;
   private _processing = false;
+  private _status: "online" | "offline" = "offline";
+
+  get status(): "online" | "offline" { return this._status; }
+  setStatus(s: "online" | "offline"): void { this._status = s; }
 
   constructor(config: PlatformConfig["llm"]) {
     this.config = config;
@@ -67,11 +73,15 @@ export class OpenAICompatibleAdapter implements LLMAdapter {
 
     try {
       const result = await this._doChat(params);
+      this._status = "online";
       logger.info(`LLM 完成 (tokens: ${result.usage?.totalTokens || "?"})`, "llm");
       // Log full response (content + thinking) for debugging
       if (result.thinking) logger.info(`[LLM 思考] ${result.thinking.slice(0, 2000)}`, "llm");
       logger.info(`[LLM 回复] ${result.content.slice(0, 4000)}`, "llm");
       return result;
+    } catch (e) {
+      this._status = "offline";
+      throw e;
     } finally {
       this._processing = false;
       release!();
@@ -122,25 +132,7 @@ export class OpenAICompatibleAdapter implements LLMAdapter {
     };
   }
 
-  async healthCheck(): Promise<boolean> {
-    try {
-      const headers: Record<string, string> = { "Content-Type": "application/json" };
-    if (this.config.apiKey) headers["Authorization"] = `Bearer ${this.config.apiKey}`;
-    const resp = await fetch(`${this.config.baseUrl}/chat/completions`, {
-        method: "POST",
-        headers,
-        body: JSON.stringify({
-          model: this.config.model,
-          messages: [{ role: "user", content: "ping" }],
-          max_tokens: 1,
-        }),
-        signal: AbortSignal.timeout(5000),
-      });
-      return resp.ok;
-    } catch {
-      return false;
-    }
-  }
+  // healthCheck removed — status is now passive (tracked via chat() success/failure)
 }
 
 // ============================================================================

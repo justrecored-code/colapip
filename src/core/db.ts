@@ -145,6 +145,10 @@ export function getAllTasks(): TaskRow[] {
   return getDb().prepare("SELECT * FROM tasks ORDER BY created_at DESC LIMIT 100").all() as TaskRow[];
 }
 
+export function getTaskById(id: string): TaskRow | undefined {
+  return getDb().prepare("SELECT * FROM tasks WHERE id = ?").get(id) as TaskRow | undefined;
+}
+
 export function deleteTask(id: string): void {
   getDb().prepare("DELETE FROM tasks WHERE id = ?").run(id);
 }

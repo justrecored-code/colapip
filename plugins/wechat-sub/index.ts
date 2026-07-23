@@ -8,6 +8,7 @@ import type { Plugin, PluginConfig, PluginContext, Task, TaskResult } from "../.
 import { ROOT } from "../../src/core/config.js";
 import { openPluginDB } from "../../src/core/db.js";
 import { ERR_SERVICE_DOWN, ERR_TIMEOUT, ERR_AUTH } from "../../src/core/error-codes.js";
+import { logger } from "../../src/core/logger.js";
 import http from "http";
 import Database from "better-sqlite3";
 import fs from "fs-extra";
@@ -18,15 +19,9 @@ let _status: "idle" | "running" | "error" | "paused" = "idle";
 let _rootDir: string;
 let _pollCtx: PluginContext | null = null;  // only for polling timer, never shared with tasks
 let _pollTimer: ReturnType<typeof setInterval> | null = null;
-let _logStream: ReturnType<typeof fs.createWriteStream> | null = null;
 let _db: Database.Database;
 let _loginServer: http.Server | null = null;
 let _loginPort = 0;
-
-function plog(msg: string): void {
-  const ts = new Date().toISOString().slice(11, 23);
-  _logStream?.write(`[${ts}] ${msg}\n`);
-}
 
 // ── Paths ──
 function dbPath(): string { return path.join(_rootDir, "wechat-sub.db"); }          // 插件内部
@@ -35,9 +30,6 @@ function articlesDir(): string { return path.join(ROOT, "data", "assets", "wecha
 function initDB(): void {
   fs.ensureDirSync(path.dirname(dbPath()));
   fs.ensureDirSync(articlesDir());
-  const logDir = path.join(ROOT, "logs", "wechat-sub");
-  fs.ensureDirSync(logDir);
-  _logStream = fs.createWriteStream(path.join(logDir, "sub.log"), { flags: "a" });
   _db = openPluginDB(dbPath());
   _db.exec(`CREATE TABLE IF NOT EXISTS subs (
     fakeid TEXT PRIMARY KEY, nickname TEXT, alias TEXT, subscribed_at TEXT
@@ -80,7 +72,7 @@ async function mpGet(url: string, params: Record<string, string> = {}): Promise<
 // ── Actions ──
 
 async function searchAccounts(query: string, ctx: PluginContext): Promise<TaskResult> {
-  plog(`搜索公众号: ${query}`);
+  ctx.logger.info(`搜索公众号: ${query}`);
   try {
     const r = await mpGet("/cgi-bin/searchbiz", { action: "search_biz", query, count: "10" });
     const list = r?.list || [];
@@ -95,7 +87,7 @@ async function searchAccounts(query: string, ctx: PluginContext): Promise<TaskRe
 }
 
 async function subscribeAccount(fakeid: string, nickname: string, ctx: PluginContext): Promise<TaskResult> {
-  plog(`订阅: ${nickname || fakeid}`);
+  ctx.logger.info(`订阅: ${nickname || fakeid}`);
   try {
     // Try to get official nickname, fall back to the one from search
     let nick = nickname;
@@ -106,10 +98,10 @@ async function subscribeAccount(fakeid: string, nickname: string, ctx: PluginCon
     if (!nick) nick = fakeid;
     _db.prepare("INSERT OR REPLACE INTO subs(fakeid, nickname, subscribed_at) VALUES(?,?,datetime('now','localtime'))").run(fakeid, nick);
     writeUIState(!!_pollTimer, 3600);
-    plog(`已订阅: ${nick}`);
+    ctx.logger.info(`已订阅: ${nick}`);
 
     const articles = await fetchArticles(fakeid, 20);
-    plog(`获取到 ${articles.length} 篇文章`);
+    ctx.logger.info(`获取到 ${articles.length} 篇文章`);
     for (const a of articles) await downloadAndAnalyze(fakeid, a, ctx);
     return { success: true, data: { fakeid, nickname: nick, articleCount: articles.length } };
   } catch (e) {
@@ -141,7 +133,7 @@ async function downloadAndAnalyze(fakeid: string, article: any, ctx: PluginConte
   const { title, link, digest, author, publish_time } = article;
   if (_db.prepare("SELECT id FROM articles WHERE link = ?").get(link || "")) return false;
 
-  plog(`下载: ${title?.slice(0, 40)}`);
+  ctx.logger.info(`下载: ${title?.slice(0, 40)}`);
   if (ctx.aborted) return false;
   let content = "";
   try {
@@ -158,7 +150,7 @@ async function downloadAndAnalyze(fakeid: string, article: any, ctx: PluginConte
 
     // Skip deleted / verification pages
     if (html.includes("环境异常") || html.includes("该内容已被发布者删除") || html.includes("涉嫌违反相关法律法规")) {
-      plog(`  ⚠ 不可用: ${title?.slice(0, 40)}`);
+      ctx.logger.warn(`  ⚠ 不可用: ${title?.slice(0, 40)}`);
       return false;
     }
 
@@ -212,8 +204,8 @@ async function downloadAndAnalyze(fakeid: string, article: any, ctx: PluginConte
       content = content.replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").trim();
     }
 
-    if (!content) { plog(`  ⚠ 无正文 (type=${itemType}): ${title?.slice(0, 40)}`); return false; }
-  } catch { plog(`  ⚠ 下载失败: ${title?.slice(0, 40)}`); return false; }
+    if (!content) { ctx.logger.warn(`  ⚠ 无正文 (type=${itemType}): ${title?.slice(0, 40)}`); return false; }
+  } catch { ctx.logger.warn(`  ⚠ 下载失败: ${title?.slice(0, 40)}`); return false; }
 
   // Per-subscription folder + date-prefixed filename
   const nickRow = _db.prepare("SELECT nickname FROM subs WHERE fakeid = ?").get(fakeid) as {nickname: string} | undefined;
@@ -325,7 +317,7 @@ async function startLoginServer(): Promise<void> {
         if (!token || !cookie) { res.writeHead(400); res.end(JSON.stringify({ ok: false, error: "missing token/cookie" })); return; }
         fs.writeJSONSync(tokenPath(), { token, cookie });
         writeUIState(!!_pollTimer, 3600);
-        plog("登录凭据已保存");
+        logger.info("登录凭据已保存", "wechat-sub");
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ ok: true }));
         return;
@@ -356,7 +348,7 @@ async function startLoginServer(): Promise<void> {
     _loginServer!.listen(0, "127.0.0.1", () => {
       const addr = _loginServer!.address();
       _loginPort = typeof addr === "object" ? addr!.port : 0;
-      plog(`登录服务: http://127.0.0.1:${_loginPort}`);
+      logger.info(`登录服务: http://127.0.0.1:${_loginPort}`, "wechat-sub");
       resolve();
     });
   });
@@ -389,14 +381,14 @@ async function pollAll(ctx: PluginContext): Promise<void> {
         const exists = _db.prepare("SELECT id FROM articles WHERE link = ?").get(a.link||"");
         if (!exists) await downloadAndAnalyze(sub.fakeid, a, ctx);
       }
-    } catch (e) { plog(`轮询 ${sub.nickname} 失败: ${(e as Error).message}`); }
+    } catch (e) { ctx.logger.warn(`轮询 ${sub.nickname} 失败: ${(e as Error).message}`); }
   }
 }
 
 // ── Plugin ──
 
 const wechatSubPlugin: Plugin = {
-  name: "wechat-sub", version: "1.1.0",
+  name: "wechat-sub", version: "1.0.0",
   description: "公众号订阅管理 — 搜索/订阅/下载/轮询，登录用 wechat-api 扫码",
   usesPiAgent: true, skills: ["db_query"], ownSkills: [],
 
@@ -404,12 +396,6 @@ const wechatSubPlugin: Plugin = {
     _rootDir = config.rootDir;
     initDB();
     await startLoginServer();
-    writeUIState(false, 0);
-    const subCount = _db.prepare("SELECT COUNT(*) as c FROM subs").get() as {c: number};
-    if (subCount && subCount.c > 0) {
-      _pollTimer = setInterval(() => { if (_pollCtx) pollAll(_pollCtx).catch(e => plog(`轮询异常: ${(e as Error).message}`)); }, 3600_000);
-      writeUIState(true, 3600);
-    }
   },
 
   async start() { _status = "idle"; },
@@ -421,8 +407,9 @@ const wechatSubPlugin: Plugin = {
   getStatus() { return _status; },
 
   async execute(task: Task, ctx: PluginContext): Promise<TaskResult> {
+    const action = (task.params.action as string) || "list";
+    ctx.logger.info(`[execute] action=${action}, _status ${_status} → running`);
     _status = "running";
-    const action = task.params.action as string || "list";
     const query = task.params.query as string || "";
 
     try {
@@ -433,15 +420,28 @@ const wechatSubPlugin: Plugin = {
         const interval = ((task.params.interval as number) || 3600) * 1000;
         if (_pollTimer) clearInterval(_pollTimer);
         _pollCtx = ctx;
-        _pollTimer = setInterval(() => { if (_pollCtx) pollAll(_pollCtx).catch(e => plog(`轮询异常: ${(e as Error).message}`)); }, interval);
+        _status = "running";
         writeUIState(true, interval / 1000);
-        plog(`定时轮询已启动: ${interval / 1000}s`);
-        return { success: true, data: { message: `轮询已启动 (${interval / 1000}s间隔)` } };
-      }
-      if (action === "stop_poll") {
+        const doPoll = () => { if (_pollCtx && !ctx.aborted) pollAll(_pollCtx).catch(e => ctx.logger.warn(`轮询异常: ${(e as Error).message}`)); };
+        _pollTimer = setInterval(doPoll, interval);
+        doPoll();
+        ctx.logger.info(`定时轮询已启动: ${interval / 1000}s, 当前状态=${_status}`);
+        // Run until stop_poll sets _status to "idle"
+        const isRunning = () => (_status as string) !== "idle" && !ctx.aborted;
+        while (isRunning()) {
+          await new Promise(r => setTimeout(r, 2000));
+        }
+        ctx.logger.info(`循环退出，当前状态=${_status}`);
         if (_pollTimer) { clearInterval(_pollTimer); _pollTimer = null; _pollCtx = null; }
         writeUIState(false, 0);
-        plog("定时轮询已停止");
+        ctx.logger.info("轮询已停止");
+        return { success: true, data: { message: "轮询已停止" } };
+      }
+      if (action === "stop_poll") {
+        _status = "idle";
+        if (_pollTimer) { clearInterval(_pollTimer); _pollTimer = null; _pollCtx = null; }
+        writeUIState(false, 0);
+        ctx.logger.info("定时轮询已停止");
         return { success: true, data: { message: "轮询已停止" } };
       }
       if (action === "fetch_all_history") {
@@ -479,13 +479,10 @@ const wechatSubPlugin: Plugin = {
       }
       return { success: false, error: `未知 action: ${action}` };
     } finally {
-      if (action !== "poll" && action !== "fetch_all_history" && action !== "start_poll" && action !== "stop_poll") _status = "idle";
+      if (action !== "start_poll" && action !== "stop_poll" && !_pollTimer) _status = "idle";
     }
   },
 
-  async resume(taskId: string, _checkpoint: unknown, ctx: PluginContext): Promise<void> {
-    _pollCtx = ctx; await pollAll(ctx);
-  },
 };
 
 export default wechatSubPlugin;

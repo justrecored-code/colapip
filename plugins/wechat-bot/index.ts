@@ -34,25 +34,6 @@ let loopAbort: AbortController | null = null;
 let loopRunning = false;
 let _aborted = false;
 
-// Fallback logger — works before ctx is available (start() runs before execute())
-let _fallbackStream: fs.WriteStream | null = null;
-function plog(msg: string): void {
-  const d = new Date();
-  const ts = `${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}:${String(d.getSeconds()).padStart(2,"0")}.${String(d.getMilliseconds()).padStart(3,"0")}`;
-  if (_ctx) {
-    _ctx.logger.info(msg);
-  } else {
-    if (!_fallbackStream) {
-      const logDir = path.join(ROOT, "logs", "wechat-bot");
-      fs.ensureDirSync(logDir);
-      _fallbackStream = fs.createWriteStream(path.join(logDir, `wechat-bot-${Date.now()}.log`), { flags: "a" });
-    }
-    _fallbackStream.write(`[${ts}] INFO ${msg}\n`);
-    // Also push to platform log for Dashboard visibility
-    eventBus.emit("log", { timestamp: ts, level: "info", plugin: "wechat-bot", message: msg });
-  }
-}
-
 // ── Contact rules: { contactId: { displayName, mode } } ──
 const contactRules = new Map<string, { displayName: string; mode: "auto_reply" | "notify" | "ignore" }>();
 
@@ -113,7 +94,7 @@ async function runLoop(signal: AbortSignal): Promise<void> {
 
   try { await notifyStart(session); } catch { /* ignore */ }
   if (signal.aborted) return;
-  plog("微信长轮询已启动");
+  _ctx?.logger.info("微信长轮询已启动");
 
   while (loopRunning && !signal.aborted && !_aborted && session) {
     try {
@@ -144,7 +125,7 @@ async function runLoop(signal: AbortSignal): Promise<void> {
           saveRules();
         }
 
-        plog(`微信消息 [${mode}] ${from}: ${text.slice(0, 50)}`);
+        _ctx?.logger.info(`微信消息 [${mode}] ${from}: ${text.slice(0, 50)}`);
 
         const out = _output ?? pluginOutput();
         const name = contactRules.get(from)?.displayName || from;
@@ -153,7 +134,7 @@ async function runLoop(signal: AbortSignal): Promise<void> {
           try {
             out.agent?.("dashboard", { prompt: promptText, replyTo: { plugin: "wechat-bot", pluginData: { to: from, contextToken: msg.context_token || "" } } });
           } catch (e) {
-            plog(`转发消息给 Agent 失败: ${(e as Error).message}`);
+            _ctx?.logger.warn(`转发消息给 Agent 失败: ${(e as Error).message}`);
           }
         } else {
           out.platform?.({ prompt: `[微信通知] ${name}: ${text}` });
@@ -162,7 +143,7 @@ async function runLoop(signal: AbortSignal): Promise<void> {
     } catch (e) {
       if (signal.aborted) break;
       if (isSessionExpiredError(e)) {
-        plog("微信连接已过期，需重新扫码");
+        _ctx?.logger.warn("微信连接已过期，需重新扫码");
         eventBus.emit("task.error", { taskId: "", errorCode: ERR_AUTH, rawError: "session expired", pluginName: "wechat-bot" });
         session = null;
         clearToken();
@@ -174,7 +155,7 @@ async function runLoop(signal: AbortSignal): Promise<void> {
       const eMsg = (e as Error).message;
       const code = eMsg.includes("timeout") || eMsg.includes("AbortError") ? ERR_TIMEOUT : ERR_SERVICE_DOWN;
       eventBus.emit("task.error", { taskId: "", errorCode: code, rawError: eMsg, pluginName: "wechat-bot" });
-      plog(`收消息出错，3 秒后重试: ${eMsg}`);
+      _ctx?.logger.warn(`收消息出错，3 秒后重试: ${eMsg}`);
       await sleep(3000);
     }
   }
@@ -329,15 +310,12 @@ const wechatBotPlugin: Plugin = {
     const saved = loadToken();
     if (saved) {
       session = saved;
-      plog("session 已恢复，等待 output 通道就绪...");
+      eventBus.emit("log", { timestamp: new Date().toISOString(), level: "info", plugin: "wechat-bot", message: "session 已恢复，等待 output 通道就绪..." });
       // Don't start loop yet — _output is null until first execute()
     }
   },
 
-  async start() {
-    if (session) { _status = "running"; startLoop(); }
-    else _status = "idle";
-  },
+  async start() { _status = "idle"; },
   async stop() {
     stopLoop();
     if (session) {
@@ -361,8 +339,16 @@ const wechatBotPlugin: Plugin = {
 
     if (action === "connect") {
       _aborted = false;
-      if (loopRunning) return { success: true, data: { status: "already_connected" } };
-      return await connectFlow(task, ctx);
+      if (loopRunning) {
+        // Already connected — keep running until disconnect or abort
+        while (_status !== "idle" && !ctx.aborted) await new Promise(r => setTimeout(r, 2000));
+        return { success: true, data: { status: "disconnected" } };
+      }
+      const result = await connectFlow(task, ctx);
+      if (!result.success) return result;
+      // Stay running until disconnect or abort
+      while (_status !== "idle" && !ctx.aborted) await new Promise(r => setTimeout(r, 2000));
+      return { success: true, data: { status: "disconnected" } };
     }
 
     if (action === "disconnect") {
@@ -450,14 +436,6 @@ const wechatBotPlugin: Plugin = {
     return { success: false, error: `未知 action: ${action}` };
   },
 
-  async resume(taskId: string, _checkpoint: unknown, ctx: PluginContext): Promise<void> {
-    _ctx = ctx;
-    // 恢复连接（如果 token 还在）
-    if (!session) {
-      const saved = loadToken();
-      if (saved) { session = saved; startLoop(); }
-    }
-  },
 };
 
 export default wechatBotPlugin;

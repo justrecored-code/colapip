@@ -109,10 +109,9 @@ describe("LLM Adapter", () => {
     expect(() => createAdapter({ adapter: "unknown" as any, baseUrl: "", model: "" })).toThrow("Unknown adapter");
   });
 
-  it("healthCheck returns false when LLM unreachable", async () => {
+  it("status is offline until first success", () => {
     const adapter = new OpenAICompatibleAdapter({ adapter: "openai-compatible", baseUrl: "http://127.0.0.1:19999/v1", model: "test" });
-    const ok = await adapter.healthCheck();
-    expect(ok).toBe(false);
+    expect(adapter.status).toBe("offline");
   });
 
   it("chat queues requests (sequential execution)", async () => {
@@ -406,7 +405,7 @@ describe("Plugin Interface", () => {
   it("PluginContext has all required fields", () => {
     // Compile-time check: if this compiles, the type is correct
     const ctx: PluginContext = {
-      llm: { name: "test", chat: async () => ({ content: "" }), healthCheck: async () => true },
+      llm: { name: "test", chat: async () => ({ content: "" }), status: "online" as const, setStatus: () => {} },
       eventBus: { emit: () => {} },
       logger: { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} },
       createAsset: () => {},
@@ -418,7 +417,7 @@ describe("Plugin Interface", () => {
   it("aborted flag is writable (for cancel signal)", () => {
     let flag = false;
     const ctx: PluginContext = {
-      llm: { name: "test", chat: async () => ({ content: "" }), healthCheck: async () => true },
+      llm: { name: "test", chat: async () => ({ content: "" }), status: "online" as const, setStatus: () => {} },
       eventBus: { emit: () => {} },
       logger: { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} },
       createAsset: () => {},

@@ -148,7 +148,7 @@ plugins/              ← 6 个插件（每个含 plugin.json + INPUT.md + OUTPU
 - 插件可安全 import 平台路径常量（`ROOT`, `DATA_DIR`, `PLUGINS_DIR` 等）和 `loadConfig()`——这些来自 `src/core/config.js`，不耦合插件
 - 插件路径用 `ROOT` 拼，不用 `process.cwd()`
 - 插件日志：**平台统一管理**——`ctx.logger.info()` 自动写 `logs/<plugin>/<plugin>-<ts>.log` + 推面板。不做 `plog()`/`openLog()`
-- 批量任务写 checkpoint，`resume()` 跳过已完成部分
+- 批量任务写 checkpoint，平台恢复时合并到 `params._resumeFrom`，插件在 execute 中读取断点
 - 长生命周期插件在 `init()` 恢复状态，`execute()` 只处理控制命令
 - 插件热重载：`POST /api/plugins/:name/reload` 或 Dashboard ↻ 按钮。URL 加 `?t=<ts>` 破缓存
 - model/baseUrl 读 `loadConfig().llm`，不硬编码

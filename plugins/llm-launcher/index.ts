@@ -80,14 +80,13 @@ function startProcess(cmd: string, args: string[], ctx: PluginContext, cwd?: str
 function stopProcess(ctx: PluginContext): void {
   if (!_process) return;
   ctx.logger.info("正在停止 LLM 进程...");
-  _process.kill("SIGTERM");
-  setTimeout(() => {
-    if (_process && !_process.killed) {
-      _process.kill("SIGKILL");
-    }
-  }, 5000);
+  const proc = _process;
+  proc.kill("SIGTERM");
   _process = null;
   _status = "idle";
+  setTimeout(() => {
+    if (!proc.killed) proc.kill("SIGKILL");
+  }, 5000);
 }
 
 // ── Plugin ──
@@ -125,12 +124,15 @@ const llmLauncherPlugin: Plugin = {
 
       _restartCount = 0;
       startProcess(cmd, args, ctx, def?.cwd);
-
-      return { success: true, data: { status: "started", command: cmd, args } };
+      // Stay running until stopped or aborted
+      while (_status !== "idle" && !ctx.aborted) await new Promise(r => setTimeout(r, 2000));
+      if (_process) stopProcess(ctx);
+      return { success: true, data: { status: "stopped" } };
     }
 
     if (action === "stop") {
       stopProcess(ctx);
+      _status = "idle";
       return { success: true, data: { status: "stopped" } };
     }
 
@@ -153,9 +155,6 @@ const llmLauncherPlugin: Plugin = {
     return { success: false, error: `未知 action: ${action}` };
   },
 
-  async resume(_taskId: string, _checkpoint: unknown, _ctx: PluginContext): Promise<void> {
-    // 不恢复——进程管理是实时操作
-  },
 };
 
 export default llmLauncherPlugin;

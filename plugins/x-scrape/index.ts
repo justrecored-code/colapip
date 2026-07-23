@@ -18,13 +18,7 @@ import path from "path";
 let _status: "idle" | "running" | "error" | "paused" = "idle";
 let _rootDir: string;
 let _rawDir: string, _dbPath: string, _tmpScreenshot: string, _promptPath: string;
-let _logStream: ReturnType<typeof fs.createWriteStream> | null = null;
 let _db: Database.Database;
-
-function plog(msg: string): void {
-  const ts = new Date().toISOString().slice(11, 23);
-  _logStream?.write(`[${ts}] ${msg}\n`);
-}
 
 function initPaths() {
   _rawDir = path.join(ROOT, "data", "x-scrape");          // 成果数据（图片）
@@ -32,9 +26,6 @@ function initPaths() {
   _tmpScreenshot = path.join(_rootDir, "viewer.png");      // 插件内部临时文件
   _promptPath = path.join(_rootDir, "prompt.md");
   fs.ensureDirSync(_rawDir);
-  const logDir = path.join(ROOT, "logs", "x-scrape");
-  fs.ensureDirSync(logDir);
-  _logStream = fs.createWriteStream(path.join(logDir, "scrape.log"), { flags: "a" });
   _db = openPluginDB(_dbPath);
   _db.exec("CREATE TABLE IF NOT EXISTS images(id INTEGER PRIMARY KEY AUTOINCREMENT, filename TEXT, url TEXT UNIQUE, username TEXT, is_valid INTEGER, source_tweet_url TEXT, tweet_hash TEXT)");
 }
@@ -219,7 +210,7 @@ const xScrapePlugin: Plugin = {
     const dl = { v: 0 }, sk = { v: 0 }, jk = { v: 0 };
     let cyc = 0;
 
-    plog("X-Scrape started");
+    ctx.logger.info("X-Scrape started");
     ctx.eventBus.emit("task.progress", { taskId: task.id, progress: 0, step: "checking_page" });
 
     try {
@@ -258,7 +249,7 @@ const xScrapePlugin: Plugin = {
               dl.v++;
               ctx.createAsset(task.id, "image/jpeg", filepath, fn, fs.statSync(filepath).size, { source: "x.com" });
             }
-          } catch (e: any) { plog(`Download failed: ${(e.message || "").slice(0, 80)}`); }
+          } catch (e: any) { ctx.logger.warn(`Download failed: ${(e.message || "").slice(0, 80)}`); }
 
           const h = sha(_state.tweet);
           seenHashes.add(h);
@@ -271,12 +262,12 @@ const xScrapePlugin: Plugin = {
           const ns = nextSlide(_state.user, _state.tweet, _state.cdn, _state);
           if (ns) {
             cyc++;
-            if (cyc % 5 === 0) plog(`Downloaded: ${dl.v}, Skipped: ${sk.v}, Junk: ${jk.v}`);
+            if (cyc % 5 === 0) ctx.logger.info(`Downloaded: ${dl.v}, Skipped: ${sk.v}, Junk: ${jk.v}`);
             return { content: [{ type: "text", text: ns.image }, { type: "image", data: ns.data, mimeType: "image/png" }], details: {} };
           }
           closeViewer();
           if (dl.v >= maxCount) {
-            plog(`Done: ${dl.v} images`);
+            ctx.logger.info(`Done: ${dl.v} images`);
             _status = "idle";
             return { content: [{ type: "text", text: "done" }], details: {} };
           }
@@ -308,7 +299,7 @@ const xScrapePlugin: Plugin = {
           const ns = nextSlide(_state.user, _state.tweet, _state.cdn, _state);
           if (ns) {
             cyc++;
-            if (cyc % 10 === 0) plog(`Junk: ${jk.v}, Downloaded: ${dl.v}`);
+            if (cyc % 10 === 0) ctx.logger.info(`Junk: ${jk.v}, Downloaded: ${dl.v}`);
             return { content: [{ type: "text", text: ns.image }, { type: "image", data: ns.data, mimeType: "image/png" }], details: {} };
           }
           closeViewer();
@@ -350,13 +341,6 @@ const xScrapePlugin: Plugin = {
     }
   },
 
-  async resume(taskId: string, checkpoint: unknown, ctx: PluginContext): Promise<void> {
-    const params = (checkpoint && typeof checkpoint === "object" && "params" in (checkpoint as any))
-      ? (checkpoint as any).params as Record<string, unknown>
-      : {};
-    const task: Task = { id: taskId, pluginName: "x-scrape", params };
-    await this.execute(task, ctx);
-  },
 };
 
 export default xScrapePlugin;

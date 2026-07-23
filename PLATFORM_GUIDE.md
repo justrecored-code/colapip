@@ -29,7 +29,7 @@ cli.ts (Commander start 命令)
   → startDashboard (Express + WebSocket + Dashboard Agent；设置 output handlers)
   → PluginManager.scanAndRegister (plugins/*/plugin.json → dynamic import → init → start；ownSkills 在此注册到 Agent)
   → cleanupOrphanTasks
-  → recoverTasks (pending/running/paused → resume)
+  → recoverTasks (pending/running/paused → retry → dispatchTask)
 
 核心模块:
   config.ts    — ROOT/DATA_DIR/DB_PATH/PLUGINS_DIR 等路径常量 + loadConfig()
@@ -223,4 +223,4 @@ npx vitest run --pool=forks --poolOptions.forks.singleFork  # 推荐（避免 SQ
 
 ## 未来改进
 
-- **BackgroundContext**：长生命周期插件（wechat-bot 等）在 `start()` 后台循环中需要输出能力，但 `PluginContext` 只在 `execute()`/`resume()` 期间存在。目前插件通过直接 import `plugin-manager` 的 `pluginOutput()` 和 `event-bus` 的 `eventBus` 绕过。应提供 `BackgroundContext`——一个在 `start()` 期间同样可用的轻量 context，使插件不需要直接依赖平台内部模块。
+- **BackgroundContext**：长生命周期插件在 `start()` 或后台循环中需要输出能力，但 `PluginContext` 只在 `execute()` 期间存在。目前插件通过直接 import `plugin-manager` 的 `pluginOutput()` 和 `event-bus` 的 `eventBus` 绕过。应提供 `BackgroundContext`——一个不依赖 `execute()` 的轻量 context，使插件不需要直接依赖平台内部模块。

@@ -103,5 +103,4 @@ export interface Plugin {
   getStatus(): PluginStatus;
 
   execute(task: Task, ctx: PluginContext): Promise<TaskResult>;
-  resume(taskId: string, checkpoint: unknown, ctx: PluginContext): Promise<void>;
 }

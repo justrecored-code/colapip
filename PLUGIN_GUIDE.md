@@ -6,7 +6,7 @@
 
 ```
 平台提供:                        插件负责:
-- 任务调度 (submitTask/dispatch)  - 业务逻辑 (execute/resume)
+- 任务调度 (submitTask/dispatch)  - 业务逻辑 (execute)
 - 事件路由 (EventBus)             - 自己的数据 (data/<name>/)
 - WebSocket Dashboard             - 自己的日志
 - LLM Adapter (ctx.llm)          - 自己的配置
@@ -44,7 +44,6 @@ interface Plugin {
   stop(): Promise<void>;
   getStatus(): PluginStatus;
   execute(task: Task, ctx: PluginContext): Promise<TaskResult>;
-  resume(taskId: string, checkpoint: unknown, ctx: PluginContext): Promise<void>;
 }
 
 interface PluginContext {
@@ -62,7 +61,7 @@ interface PluginContext {
 
 `output.platform` 和 `output.agent` 是两条独立通道。需要两个都通知就各调一次。
 
-**ctx 在 init() 后即可用**——不依赖 execute() 调用。长生命周期插件的后台 loop 可以直接用 `ctx.logger.info()`、`ctx.output.agent()`。
+**ctx 只在 `execute()` 期间存在。** 长生命周期插件的后台 loop 如需输出能力，见下方"长生命周期插件的输出通道"。
 
 ## 插件目录结构
 
@@ -250,7 +249,7 @@ replyTo: { wechat: { to, contextToken } } // → 自动发微信回复
 
 ### 长生命周期插件的输出通道
 
-`PluginContext` 只在 `execute()` 和 `resume()` 期间可用。长生命周期插件（如 wechat-bot）在 `start()` 中运行后台循环，此时 `ctx` 尚未存在。
+`PluginContext` 只在 `execute()` 期间可用。长生命周期插件的后台循环（如 wechat-bot 的消息 loop）在 `execute()` 内部运行，`ctx` 直接可用；若在 `execute()` 之外（如 `start()` 中启动的旧模式），`ctx` 不存在，需使用下方 `pluginOutput()` 等工具。
 
 后台循环中需要输出时，可从 `plugin-manager` 导入以下工具：
 
@@ -358,31 +357,33 @@ const agent = new Agent({
 
 ```
 init() → start() → ┌─ 任务型: execute() → 返回 → 等下次
-                   └─ 长周期: init 启 loop → execute 处理命令
+                   └─ 服务型: 提交 start/connect/start_poll → execute() 保持 running → stop 退出
               → stop()
 ```
 
-ctx（含 output、logger）在 init() 后即可用。
+ctx 只在 `execute()` 期间存在。
 
 ## 取消信号
 
 ```typescript
 for (const item of items) {
-  if (ctx.aborted) return { success: false, error: "cancelled" };
+  if (ctx.aborted) break;  // 停止处理，平台已设 paused 状态，return 即可
 }
 ```
 
 ## 断点恢复
 
+平台重启后自动恢复未完成的任务，checkpoint 合并到 `params._resumeFrom`。插件只需在 execute 中读取即可：
+
 ```typescript
 import { updateTaskState } from "../../src/core/db.js";
+
+// 保存断点
 updateTaskState(task.id, "running", { checkpoint: { idx: N } });
 
-// resume 读 checkpoint
-async resume(taskId, checkpoint, ctx) {
-  const cp = checkpoint as { idx: number } | null;
-  await this.execute({ ...task, params: { ...task.params, _resumeIdx: cp?.idx ?? 0 } }, ctx);
-}
+// execute 中读取断点（恢复时平台自动注入 _resumeFrom）
+const rf = task.params._resumeFrom as { idx?: number } | undefined;
+const startIdx = rf?.idx ?? 0;
 ```
 
 内部参数 `_` 前缀区分。
@@ -415,7 +416,6 @@ const myPlugin: Plugin = {
     ctx.logger.info("开始");
     return { success: true, data: { result: "done" } };
   },
-  async resume() {},
 };
 export default myPlugin;
 ```

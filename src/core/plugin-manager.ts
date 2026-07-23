@@ -6,7 +6,7 @@ import fs from "fs-extra";
 import path from "path";
 import { PLUGINS_DIR, SKILLS_DIR, ROOT, loadConfig, type PlatformConfig } from "./config.js";
 import {
-  createTask, updateTaskState, getPendingAndRunningTasks, getAllTasks,
+  createTask, updateTaskState, getPendingAndRunningTasks, getAllTasks, getTaskById,
   createAsset, deleteTask, type TaskRow,
 } from "./db.js";
 import { eventBus } from "./event-bus.js";
@@ -300,6 +300,13 @@ class PluginManager {
     const plugin = this.plugins.get(pluginName);
     if (!plugin) return;
 
+    // Merge checkpoint into params so plugins read it via _resumeFrom
+    const row = getTaskById(taskId);
+    if (row?.checkpoint) {
+      try { params = { ...params, _resumeFrom: JSON.parse(row.checkpoint) }; }
+      catch { logger.error(`Failed to parse checkpoint for task ${taskId}`, "plugin-manager"); }
+    }
+
     const task: Task = { id: taskId, pluginName, params };
     const ctx = this.buildContext(pluginName, taskId);
 
@@ -309,10 +316,11 @@ class PluginManager {
 
     const run = (retry: boolean): void => {
       plugin!.execute(task, ctx).then(result => {
+        // User paused/cancelled — state already handled, don't touch it
+        if (ctx.aborted) return;
         if (result.success) {
           updateTaskState(taskId, "completed", { progress: 1 });
           eventBus.emit("task.completed", { taskId, data: result.data, pluginName });
-          // Notify Agent if requested
           if (params.notify && _agentHandler) {
             logger.info(`Task ${taskId} completed, notifying agent`, "plugin-manager");
             const replyTo = (params._replyTo as ReplyTo) || { dashboard: true };
@@ -320,21 +328,13 @@ class PluginManager {
           }
         } else {
           const err = result.error ?? "Unknown error";
-          const isDown = /ERR_SERVICE_DOWN|service.down|ECONNREFUSED|fetch.failed/i.test(err);
-          const isCtx = /context|CONTEXT/i.test(err);
-          if (isDown) {
-            updateTaskState(taskId, "paused", { error: err });
-            eventBus.emit("task.error", { taskId, errorCode: ERR_SERVICE_DOWN, rawError: err, pluginName });
-            if (params.notify && _agentHandler) _agentHandler("dashboard", { prompt: `[系统] 任务 ${taskId} (${pluginName}) 暂停：${err.slice(0, 100)}。恢复后自动重试。`, replyTo: (params._replyTo as ReplyTo) || { dashboard: true } });
-          } else if (isCtx) {
-            updateTaskState(taskId, "failed", { error: err });
-            eventBus.emit("task.error", { taskId, errorCode: ERR_CONTEXT_LIMIT, rawError: err, pluginName });
-          } else {
-            updateTaskState(taskId, "failed", { error: err });
-            eventBus.emit("task.error", { taskId, errorCode: ERR_UNKNOWN, rawError: err, pluginName });
+          this.handleTaskError(taskId, pluginName, err);
+          if (params.notify && _agentHandler && /ERR_SERVICE_DOWN/.test(err)) {
+            _agentHandler("dashboard", { prompt: `[系统] 任务 ${taskId} (${pluginName}) 暂停：${err.slice(0, 100)}。恢复后自动重试。`, replyTo: (params._replyTo as ReplyTo) || { dashboard: true } });
           }
         }
       }).catch(err => {
+        if (ctx.aborted) return;
         const msg = err instanceof Error ? err.message : String(err);
         const isContext = /context|CONTEXT|context_length|maximum context/i.test(msg);
         if (isContext && retry) {
@@ -343,9 +343,7 @@ class PluginManager {
           setTimeout(() => { if (this.plugins.has(pluginName)) run(false); }, 1000);
           return;
         }
-        const code = isContext ? ERR_CONTEXT_LIMIT : ERR_UNKNOWN;
-        updateTaskState(taskId, "failed", { error: msg });
-        eventBus.emit("task.error", { taskId, errorCode: code, rawError: msg, pluginName });
+        this.handleTaskError(taskId, pluginName, msg);
       }).finally(() => {
       this.taskAborts.delete(taskId);
       this.runningCount.set(pluginName, (this.runningCount.get(pluginName) ?? 1) - 1);
@@ -353,6 +351,25 @@ class PluginManager {
     });
     };
     run(true);
+  }
+
+  // ============================================================================
+  // Unified error handling — single place for error code categorization
+  // ============================================================================
+
+  private handleTaskError(taskId: string, pluginName: string, errMsg: string): void {
+    const isDown = /ERR_SERVICE_DOWN|service.down|ECONNREFUSED|fetch.failed/i.test(errMsg);
+    const isCtx = /context|CONTEXT/i.test(errMsg);
+    if (isDown) {
+      updateTaskState(taskId, "paused", { error: errMsg });
+      eventBus.emit("task.error", { taskId, errorCode: ERR_SERVICE_DOWN, rawError: errMsg, pluginName });
+    } else if (isCtx) {
+      updateTaskState(taskId, "failed", { error: errMsg });
+      eventBus.emit("task.error", { taskId, errorCode: ERR_CONTEXT_LIMIT, rawError: errMsg, pluginName });
+    } else {
+      updateTaskState(taskId, "failed", { error: errMsg });
+      eventBus.emit("task.error", { taskId, errorCode: ERR_UNKNOWN, rawError: errMsg, pluginName });
+    }
   }
 
   private dispatchNextPending(pluginName: string): void {
@@ -463,7 +480,7 @@ class PluginManager {
     if (sig) sig.aborted = false;
 
     // Trigger dispatch: find the task's plugin and try to run it
-    const row = getAllTasks().find(t => t.id === taskId);
+    const row = getTaskById(taskId);
     if (row) this.dispatchNextPending(row.plugin_name);
   }
 
@@ -488,62 +505,12 @@ class PluginManager {
   async recoverTasks(): Promise<void> {
     const tasks = getPendingAndRunningTasks();
     if (tasks.length === 0) return;
-
     logger.info(`Recovering ${tasks.length} task(s)...`, "plugin-manager");
-
     for (const row of tasks) {
       const plugin = this.plugins.get(row.plugin_name);
-      if (!plugin) {
-        deleteTask(row.id);
-        continue;
-      }
-
-      let params: Record<string, unknown>;
-      try { params = JSON.parse(row.params || "{}"); } catch { updateTaskState(row.id, "failed", { error: "params JSON 损坏" }); eventBus.emit("task.error", { taskId: row.id, errorCode: "ERR_UNKNOWN", rawError: "params JSON 损坏", pluginName: row.plugin_name }); continue; }
-      const task: Task = { id: row.id, pluginName: row.plugin_name, params };
-
-      const ctx = this.createPluginContext(row.plugin_name, row.id, { reuseSessionLog: false, logSuffix: row.id.slice(0, 8) });
-
-      let checkpoint: unknown;
-      try { checkpoint = row.checkpoint ? JSON.parse(row.checkpoint) : undefined; } catch { checkpoint = undefined; }
+      if (!plugin) { deleteTask(row.id); continue; }
       logger.info(`Resuming task ${row.id} (state: ${row.state}, step: ${row.step || "start"})`, "plugin-manager");
-
-      // Mark running + emit state change (same as dispatchTask)
-      updateTaskState(row.id, "running", { error: "" });
-      eventBus.emit("task.state_change", { taskId: row.id, state: "running" });
-      this.runningCount.set(row.plugin_name, (this.runningCount.get(row.plugin_name) ?? 0) + 1);
-
-      // Fire-and-forget: don't block recovery loop
-      if (checkpoint !== undefined) {
-        plugin.resume(row.id, checkpoint, ctx).catch(err => {
-          const msg = err instanceof Error ? err.message : String(err);
-          logger.error(`Recovery failed for task ${row.id}: ${msg}`, "plugin-manager");
-          updateTaskState(row.id, "failed", { error: msg });
-          eventBus.emit("task.error", { taskId: row.id, errorCode: ERR_UNKNOWN, rawError: msg, pluginName: row.plugin_name });
-        }).finally(() => {
-          this.taskAborts.delete(row.id);
-          this.runningCount.set(row.plugin_name, (this.runningCount.get(row.plugin_name) ?? 1) - 1);
-          this.dispatchNextPending(row.plugin_name);
-        });
-      } else {
-        plugin.execute(task, ctx).then(result => {
-          if (result.success) {
-            updateTaskState(row.id, "completed", { progress: 1 });
-            eventBus.emit("task.completed", { taskId: row.id, data: result.data });
-          } else {
-            updateTaskState(row.id, "failed", { error: result.error ?? "Unknown error" });
-            eventBus.emit("task.error", { taskId: row.id, errorCode: ERR_UNKNOWN, rawError: result.error, pluginName: row.plugin_name });
-          }
-        }).catch(err => {
-          const msg = err instanceof Error ? err.message : String(err);
-          updateTaskState(row.id, "failed", { error: msg });
-          eventBus.emit("task.error", { taskId: row.id, errorCode: ERR_UNKNOWN, rawError: msg, pluginName: row.plugin_name });
-        }).finally(() => {
-          this.taskAborts.delete(row.id);
-          this.runningCount.set(row.plugin_name, (this.runningCount.get(row.plugin_name) ?? 1) - 1);
-          this.dispatchNextPending(row.plugin_name);
-        });
-      }
+      this.retryTask(row.id);
     }
   }
 
@@ -565,10 +532,11 @@ class PluginManager {
     return await plugin.execute(task, ctx);
   }
 
-  getAllPlugins(): Array<{ name: string; version: string; description: string; status: string }> {
-    return [...this.plugins.values()].map(p => ({
-      name: p.name, version: p.version, description: p.description, status: p.getStatus(),
-    }));
+  getAllPlugins(): Array<{ name: string; version: string; description: string; status: string; type: string }> {
+    return [...this.plugins.values()].map(p => {
+      const cfg = this.pluginConfigs.get(p.name) as Record<string, unknown> | undefined;
+      return { name: p.name, version: p.version, description: p.description, status: p.getStatus(), type: (cfg?.type as string) || "task" };
+    });
   }
 
   /** Hot-reload a single plugin without restarting the platform */

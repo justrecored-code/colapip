@@ -4,7 +4,7 @@
  * Obsidian 直接打开 data/knowledge/ 作为 vault 即可编辑。
  */
 import type { Plugin, PluginConfig, PluginContext, Task, TaskResult } from "../../src/core/plugin.js";
-import { ROOT, loadConfig, createLogStream } from "../../src/core/config.js";
+import { ROOT, loadConfig } from "../../src/core/config.js";
 import { updateTaskState } from "../../src/core/db.js";
 import { createAgentModel } from "../../src/core/llm.js";
 import { ERR_SERVICE_DOWN, ERR_AUTH, errMsg } from "../../src/core/error-codes.js";
@@ -15,18 +15,7 @@ import path from "path";
 // ── State ──
 let _status: "idle" | "running" | "error" | "paused" = "idle";
 let _rootDir: string;
-let _logStream: ReturnType<typeof fs.createWriteStream> | null = null;
-let _logFilePath = "";
 function kbDir(): string { return path.join(ROOT, "data", "knowledge"); }
-
-function openLog(taskId: string): void {
-  _logStream = createLogStream("knowledge-base", taskId);
-  _logFilePath = (_logStream as any).path?.toString() || "";
-}
-function plog(msg: string): void {
-  const ts = new Date().toISOString().slice(11, 23);
-  _logStream?.write(`[${ts}] ${msg}\n`);
-}
 
 interface Molecule { file: string; category: string; name: string; tags: string[]; [key: string]: unknown; }
 
@@ -113,7 +102,11 @@ async function buildIndex(): Promise<number> {
 
 // ── Agent helpers ──
 function extractText(msgs: any[]): string {
-  return msgs.filter((m: any) => m.role === "assistant").flatMap((m: any) => Array.isArray(m.content) ? m.content.filter((b: any) => b.type === "text") : []).map((b: any) => b.text).join("\n");
+  return msgs.filter((m: any) => m.role === "assistant").flatMap((m: any) => {
+    if (typeof m.content === "string") return [{ type: "text", text: m.content }];
+    if (Array.isArray(m.content)) return m.content.filter((b: any) => b.type === "text");
+    return [];
+  }).map((b: any) => b.text).join("\n");
 }
 
 // ── Plugin ──
@@ -126,7 +119,6 @@ const knowledgeBasePlugin: Plugin = {
 
   async execute(task: Task, ctx: PluginContext): Promise<TaskResult> {
     _status = "running";
-    openLog(task.id);
     const action = (task.params.action as string) || "search";
 
     try {
@@ -147,7 +139,7 @@ const knowledgeBasePlugin: Plugin = {
       // ── rebuild_index ──
       if (action === "rebuild_index") {
         const n = await buildIndex();
-        plog(`索引已重建: ${n} 条`);
+        ctx.logger.info(`索引已重建: ${n} 条`);
         return { success: true, data: { indexed: n } };
       }
 
@@ -245,7 +237,7 @@ const knowledgeBasePlugin: Plugin = {
           walk(ad);
         }
         if (sources.length === 0) return { success: false, error: "无可用数据源" };
-        plog(`待分析: ${sources.length} 条内容`);
+        ctx.logger.info(`待分析: ${sources.length} 条内容`);
 
         // ── Process answered inbox entries → move to formal directory ──
         const inboxDir = path.join(kbDir(), "_inbox");
@@ -267,7 +259,7 @@ const knowledgeBasePlugin: Plugin = {
               });
               fs.writeFileSync(path.join(targetDir, `${sanitize(String(data.name))}.md`), cleaned, "utf-8");
               fs.removeSync(fp);
-              plog(`  Inbox→入库: ${String(data.category)}/${String(data.name)}`);
+              ctx.logger.info(`  Inbox→入库: ${String(data.category)}/${String(data.name)}`);
             }
           }
         }
@@ -324,36 +316,29 @@ category: character
           toolExecution: "sequential", getApiKey: async () => "not-needed",
         });
 
-        const resumeIdx = (task.params._resumeIdx as number) ?? 0;
+        ctx.logger.info(`_resumeFrom = ${JSON.stringify(task.params._resumeFrom)}`);
+        const rf = task.params._resumeFrom as { idx?: number } | undefined;
+        const resumeIdx = rf?.idx ?? 0;
+        if (resumeIdx > 0) ctx.logger.info(`从断点恢复: 第${resumeIdx + 1}条开始`);
         let totalAdded = 0, totalSkipped = 0;
         for (let i = resumeIdx; i < sources.length; i++) {
           if (ctx.aborted) return { success: false, error: "cancelled" };
           const s = sources[i]!;
           let label = `#${i + 1}`;
           try { label = JSON.parse(s).source || `#${i + 1}`; } catch {}
-          plog(`\n── ${label} (${i + 1}/${sources.length}) ──`);
+          ctx.logger.info(`\n── ${label} (${i + 1}/${sources.length}) ──`);
 
           // Clear agent context each item to avoid overflow
           (extractAgent.state as any).messages = [];
-          try { await extractAgent.prompt(`分析以下内容，提取可复用的知识条目：\n\n${s}`); await extractAgent.waitForIdle(); } catch (e) { plog(`提取失败: ${(e as Error).message}`); continue; }
-          const rawMsgs = (extractAgent.state as any).messages ?? [];
-          let eText = extractText(rawMsgs);
-          if (!eText) {
-            plog("提取空，重试…");
-            (extractAgent.state as any).messages = [];
-            try { await extractAgent.prompt(`重新分析：\n\n${s}`); await extractAgent.waitForIdle(); } catch (e) { plog(`重试也失败: ${(e as Error).message}`); return { success: false, error: errMsg(ERR_SERVICE_DOWN, "LLM 无响应") }; }
-            const retryText = extractText((extractAgent.state as any).messages ?? []);
-            if (!retryText) { plog("重试仍空"); return { success: false, error: errMsg(ERR_SERVICE_DOWN, "LLM 两次提取均为空") }; }
-            // Retry succeeded — rebuild eText + audit from retry
-            (extractAgent.state as any).messages = [];
-            eText = retryText;
-          }
-          plog(`提取:\n${eText}`);
+          try { await extractAgent.prompt(`分析以下内容，提取可复用的知识条目：\n\n${s}`); await extractAgent.waitForIdle(); } catch (e) { ctx.logger.error(`提取失败: ${(e as Error).message}`); return { success: false, error: errMsg(ERR_SERVICE_DOWN, (e as Error).message) }; }
+          const eText = extractText((extractAgent.state as any).messages ?? []);
+          if (!eText) { ctx.logger.warn("提取空"); return { success: false, error: errMsg(ERR_SERVICE_DOWN, "LLM 返回空内容") }; }
+          ctx.logger.info(`提取:\n${eText}`);
           (auditAgent.state as any).messages = [];
-          try { await auditAgent.prompt(`已有:\n${existingSummary}\n\n待审查:\n${eText || "(空)"}\n\n审查并输出通过的内容。`); await auditAgent.waitForIdle(); } catch (e) { plog(`审计失败: ${(e as Error).message}`); continue; }
+          try { await auditAgent.prompt(`已有:\n${existingSummary}\n\n待审查:\n${eText || "(空)"}\n\n审查并输出通过的内容。`); await auditAgent.waitForIdle(); } catch (e) { ctx.logger.error(`审计失败: ${(e as Error).message}`); continue; }
           let aText = extractText((auditAgent.state as any).messages ?? []);
-          if (!aText) plog(`审计空!`);
-          plog(`审计:\n${aText || "(空)"}`);
+          if (!aText) ctx.logger.warn(`审计空!`);
+          ctx.logger.info(`审计:\n${aText || "(空)"}`);
 
           let round = 1, sourceAdded = 0;
           while (round <= 3) {
@@ -381,28 +366,28 @@ category: character
               const existed = fs.existsSync(mp);
               fs.writeFileSync(mp, moleculeToMd(entry), "utf-8");
               ra++;
-              if (existed) plog(`  覆盖: ${isUncertain ? "_inbox" : String(data.category)}/${String(data.name)}`);
+              if (existed) ctx.logger.info(`  覆盖: ${isUncertain ? "_inbox" : String(data.category)}/${String(data.name)}`);
             }
             sourceAdded += ra;
             if (ra > 0) break;
             if (round >= 3) break;
             round++;
-            plog(`  零通过，重试${round}...`);
+            ctx.logger.info(`  零通过，重试${round}...`);
             try { await extractAgent.prompt(`重新提取，确保name+tags+category完整：\n${aText.slice(0, 500)}`); await extractAgent.waitForIdle(); await auditAgent.prompt(`已有:\n${existingSummary}\n\n待审查:\n${extractText((extractAgent.state as any).messages ?? [])}\n\n审查通过。`); await auditAgent.waitForIdle(); aText = extractText((auditAgent.state as any).messages ?? []); } catch { break; }
           }
           totalAdded += sourceAdded;
           if (sourceAdded === 0) {
             const rejected = aText.match(/拒绝[：:]\s*(.+)/i);
-            if (rejected) plog(`  拒绝原因: ${rejected[1]}`);
+            if (rejected) ctx.logger.info(`  拒绝原因: ${rejected[1]}`);
             totalSkipped++;
           }
-          plog(`  → ${sourceAdded} 入库`);
+          ctx.logger.info(`  → ${sourceAdded} 入库`);
           // Save checkpoint: resume from next item on restart
           if (sources.length > 1 && i + 1 < sources.length) {
             updateTaskState(task.id, "running", { checkpoint: { idx: i + 1 }, step: `${i + 1}/${sources.length}` });
           }
         }
-        plog(`\n完成: +${totalAdded} (${totalSkipped} 条无新增)`);
+        ctx.logger.info(`\n完成: +${totalAdded} (${totalSkipped} 条无新增)`);
         ctx.output.platform({ type: "kb.curated", added: totalAdded, skipped: totalSkipped, sources: sources.length });
         return { success: true, data: { sources: sources.length, added: totalAdded, skipped: totalSkipped } };
       }
@@ -410,13 +395,7 @@ category: character
       return { success: false, error: `未知 action: ${action}` };
     } finally {
       _status = "idle";
-      _logStream?.end();
     }
-  },
-  async resume(taskId: string, checkpoint: unknown, ctx: PluginContext): Promise<void> {
-    const cp = (checkpoint && typeof checkpoint === "object") ? checkpoint as Record<string, unknown> : null;
-    const task: Task = { id: taskId, pluginName: "knowledge-base", params: { action: "auto_curate", _resumeIdx: cp?.idx ?? 0 } };
-    await this.execute(task, ctx);
   },
 };
 export default knowledgeBasePlugin;

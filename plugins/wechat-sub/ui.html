@@ -201,8 +201,15 @@ async function sub(fid,name){ const r=await call({action:'subscribe',query:fid,n
 async function unsub(fid){ if(!confirm('确认退订？')) return; const r=await call({action:'unsubscribe',query:fid}); toast(r.success?'已退订':r.error, r.success); if(r.success) loadState(); }
 async function doPoll(){ const r=await call({action:'poll'}); toast(r.success?'轮询完成':r.error, r.success); loadState(); }
 async function togglePoll(){
-  if(state.polling){ const r=await call({action:'stop_poll'}); toast(r.success?'已停止':r.error,r.success); }
-  else { const r=await call({action:'start_poll'}); toast(r.success?'已启动':r.error,r.success); }
+  if (state.polling) {
+    // stop_poll uses direct call to bypass task concurrency slot
+    const r = await call({action:'stop_poll'});
+    toast(r.success ? '已停止' : (r.error || '失败'), r.success);
+  } else {
+    const r = await fetch('/api/tasks', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({pluginName:'wechat-sub',params:{action:'start_poll'}}) });
+    const d = await r.json();
+    toast(d.taskId ? '已启动' : (d.error || '失败'), !!d.taskId);
+  }
   loadState();
 }
 async function fetchHistory(){

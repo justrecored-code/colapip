@@ -3,14 +3,14 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>VibePractice</title>
+<title>ColaPip</title>
 <link rel="stylesheet" href="/style.css">
 </head>
 <body>
 
 <!-- Top Bar -->
 <div class="topbar">
-  <span class="logo">VibePractice</span>
+  <span class="logo">ColaPip</span>
   <div class="pill"><span class="dot" id="llm-dot"></span><span id="llm-text">LLM</span></div>
   <span id="plugin-tags"></span>
 </div>
@@ -51,6 +51,7 @@
   <div class="filter-bar">
     <button class="filter-pill active" data-filter="active" onclick="setTaskFilter('active')">活跃任务</button>
     <button class="filter-pill" data-filter="all" onclick="setTaskFilter('all')">全部</button>
+    <button class="filter-pill" data-filter="services" onclick="setTaskFilter('services')">服务</button>
     <button style="margin-left:auto;font-size:12px;padding:5px 16px;border-radius:8px;border:1px solid var(--accent);background:rgba(139,124,246,0.15);color:var(--accent2);cursor:pointer;font:inherit" onclick="openNewTask()">+ 新建任务</button>
   </div>
   <div id="task-list"></div>

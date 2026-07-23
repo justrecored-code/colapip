@@ -20,17 +20,6 @@ import path from "path";
 
 let _status: "idle" | "running" | "error" | "paused" = "idle";
 let _rootDir: string;
-let _logStream: ReturnType<typeof fs.createWriteStream> | null = null;
-
-function initLog(): void {
-  const p = path.join(ROOT, "logs", "recipe-engine");
-  fs.ensureDirSync(p);
-  _logStream = fs.createWriteStream(path.join(p, "engine.log"), { flags: "a" });
-}
-function plog(msg: string): void {
-  const ts = new Date().toISOString().slice(11, 23);
-  _logStream?.write(`[${ts}] ${msg}\n`);
-}
 
 // ============================================================================
 // ComfyUI paths
@@ -232,7 +221,6 @@ const recipeEnginePlugin: Plugin = {
 
   async init(config: PluginConfig) {
     _rootDir = config.rootDir;
-    initLog();
   },
 
   async start() { _status = "idle"; },
@@ -270,7 +258,7 @@ const recipeEnginePlugin: Plugin = {
         _status = "error";
         return { success: false, error: "中没有图片" };
       }
-      plog(`Batch mode: ${imagePaths.length} images`);
+      ctx.logger.info(`Batch mode: ${imagePaths.length} images`);
     } else if (fs.existsSync(image)) {
       imagePaths = [image];
     } else if (fs.existsSync(path.join(rawDir, image))) {
@@ -322,7 +310,7 @@ const recipeEnginePlugin: Plugin = {
         iterationCount++;
         seed = (params.seed as number) ?? seed;
 
-        plog(`Iteration ${iterationCount}, seed ${seed}`);
+        ctx.logger.info(`Iteration ${iterationCount}, seed ${seed}`);
         // Only update step text — batch position progress is managed by the outer loop
         ctx.eventBus.emit("task.progress", {
           taskId: task.id,
@@ -358,7 +346,7 @@ const recipeEnginePlugin: Plugin = {
             const msg = err instanceof Error ? err.message : String(err);
             const errorCode = msg.startsWith("ERR_") ? msg.split(":")[0]! : ERR_SERVICE_DOWN;
             ctx.eventBus.emit("task.error", { taskId: task.id, errorCode, rawError: msg, pluginName: "recipe-engine" });
-            plog(`[${wfKey}] ${msg}`);
+            ctx.logger.warn(`[${wfKey}] ${msg}`);
             contentBlocks.push({ type: "text", text: `[${wfKey}] FAILED: ${msg}` });
           }
         }
@@ -420,7 +408,8 @@ const recipeEnginePlugin: Plugin = {
     // ── Process each image ──
     const results: string[] = [];
     const total = imagePaths.length;
-    const resumeIdx = (task.params._resumeIdx as number) ?? 0;
+    const rf = task.params._resumeFrom as { idx?: number } | undefined;
+    const resumeIdx = rf?.idx ?? 0;
     const imgShare = 1 / total;
 
     for (let idx = resumeIdx; idx < imagePaths.length; idx++) {
@@ -435,7 +424,7 @@ const recipeEnginePlugin: Plugin = {
       iterationCount = 0;
       seed = 42;
 
-      plog(`${batchPrefix}Processing: ${imageName}`);
+      ctx.logger.info(`${batchPrefix}Processing: ${imageName}`);
       ctx.eventBus.emit("task.progress", { taskId: task.id, progress: baseProgress, step: `${batchPrefix}${imageName}` });
 
       fs.ensureDirSync(currentOutputDir);
@@ -465,14 +454,14 @@ const recipeEnginePlugin: Plugin = {
       }
 
       results.push(currentOutputDir);
-      plog(`${batchPrefix}Done: ${imageName}`);
+      ctx.logger.info(`${batchPrefix}Done: ${imageName}`);
       ctx.eventBus.emit("task.progress", { taskId: task.id, progress: (idx + 1) / total, step: `${batchPrefix}done` });
 
       // Clear agent context for next image (keep tools, reset messages)
       agent.state.messages = [];
 
       if (ctx.aborted) {
-        plog(`Cancelled after ${idx + 1}/${total}`);
+        ctx.logger.info(`Cancelled after ${idx + 1}/${total}`);
         _status = "idle";
         return { success: false, error: "cancelled" };
       }
@@ -487,18 +476,6 @@ const recipeEnginePlugin: Plugin = {
     return { success: true, data: { runs: results, total: results.length } };
   },
 
-  async resume(taskId: string, checkpoint: unknown, ctx: PluginContext): Promise<void> {
-    const cp = (checkpoint && typeof checkpoint === "object") ? checkpoint as Record<string, unknown> : null;
-    // If checkpoint has an idx, skip ahead in batch mode
-    if (cp?.idx != null && typeof cp.idx === "number") {
-      const task: Task = { id: taskId, pluginName: "recipe-engine", params: { image: "all", max_iterations: cp.maxIterations ?? 3 } };
-      // Pass checkpoint idx so execute() can skip first N images
-      await this.execute({ ...task, params: { ...task.params, _resumeIdx: cp.idx } }, ctx);
-    } else {
-      const task: Task = { id: taskId, pluginName: "recipe-engine", params: (cp?.params as Record<string, unknown>) ?? {} };
-      await this.execute(task, ctx);
-    }
-  },
 };
 
 export default recipeEnginePlugin;

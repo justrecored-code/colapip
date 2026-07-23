@@ -198,6 +198,8 @@ async function refreshPlugins() {
     document.getElementById("plugin-tags").innerHTML = plugins.map(p =>
       `<span class="plugin-tag">${p.name} v${p.version}</span>`
     ).join("");
+    // Track service-type plugins for task filtering
+    window._servicePlugins = new Set(plugins.filter(p => p.type === "service").map(p => p.name));
   } catch {}
 }
 
@@ -227,9 +229,8 @@ async function refreshPluginTabs() {
     tabBar.querySelectorAll(".plugin-tab-btn").forEach(b => b.remove());
     tabBar.querySelectorAll(".load-plugin-btn").forEach(b => b.remove());
     panelHost.querySelectorAll(".plugin-ui-panel").forEach(p => p.remove());
-    // Add tabs for plugins that have ui.html
+    // Add tabs for all registered plugins
     for (const p of plugins) {
-      if (!p.hasUi && !p.hasLog) continue;
       const uiSrc = p.hasUi ? `/plugins/${p.name}/ui` : `/plugin-log.html?name=${encodeURIComponent(p.name)}`;
       const tabBtn = document.createElement("button");
       tabBtn.className = "plugin-tab-btn";
@@ -246,16 +247,6 @@ async function refreshPluginTabs() {
       panel.appendChild(iframe);
       panelHost.appendChild(panel);
     }
-    // "Load new plugin" button
-    const loadBtn = document.createElement("button");
-    loadBtn.className = "plugin-tab-btn load-plugin-btn";
-    loadBtn.title = "加载新插件";
-    loadBtn.textContent = "+";
-    loadBtn.onclick = () => {
-      const name = prompt("输入插件目录名（如 article-writer）:");
-      if (name) reloadPlugin(name.trim());
-    };
-    tabBar.appendChild(loadBtn);
   } catch {}
 }
 

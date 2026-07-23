@@ -3,5 +3,6 @@
   "version": "1.0.0",
   "description": "本地 LLM 进程管理 — 启动/监控/重启",
   "usesPiAgent": true,
+  "type": "service",
   "skills": []
 }

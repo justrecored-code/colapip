@@ -12,7 +12,6 @@ export const ROOT = path.resolve(__dirname, "..", "..");
 export const PLUGINS_DIR = path.join(ROOT, "plugins");
 export const DATA_DIR = path.join(ROOT, "data");
 const ASSETS_DIR = path.join(DATA_DIR, "assets");
-const LOGS_DIR = path.join(ROOT, "logs");
 export const SKILLS_DIR = path.join(ROOT, "src", "platform-skills");
 export const DB_PATH = path.join(ROOT, "db", "platform.db");
 
@@ -73,15 +72,10 @@ export function getConfig(): PlatformConfig {
   return _config;
 }
 
-/** Create a per-task log stream. Format: logs/<name>/<name>-<ts>.log, keep last 10. */
-export function createLogStream(name: string, taskId?: string): ReturnType<typeof fs.createWriteStream> {
-  const dir = path.join(LOGS_DIR, name);
-  fs.ensureDirSync(dir);
-  const prefix = name.split("/").pop() || name;
-  const old = fs.readdirSync(dir).filter(f => f.startsWith(prefix + "-") && f.endsWith(".log")).sort().reverse();
-  for (const f of old.slice(10)) fs.removeSync(path.join(dir, f));
-  const id = taskId ? taskId.slice(0, 8) : Date.now().toString(36);
-  return fs.createWriteStream(path.join(dir, `${prefix}-${id}-${Date.now()}.log`), { flags: "w" });
+/** Local time string for log timestamps */
+export function localtime(): string {
+  const d = new Date();
+  return `${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}:${String(d.getSeconds()).padStart(2,"0")}.${String(d.getMilliseconds()).padStart(3,"0")}`;
 }
 
 // Ensure data directories

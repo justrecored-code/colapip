@@ -7,7 +7,8 @@ plugins/llm-launcher/config.json
 data/
 logs/
 db/
-# Plugin runtime files (DB, credentials, cache)
+# Plugin runtime files (DB, credentials, cache, personal docs)
+plugins/article-writer/girll-docs.md
 plugins/wechat-sub/token.json
 plugins/wechat-sub/ui-state.json
 plugins/wechat-sub/wechat-sub.db

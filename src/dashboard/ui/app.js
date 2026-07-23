@@ -225,6 +225,7 @@ async function refreshPluginTabs() {
     const panelHost = document.getElementById("plugin-panels");
     // Remove old plugin tabs/panels
     tabBar.querySelectorAll(".plugin-tab-btn").forEach(b => b.remove());
+    tabBar.querySelectorAll(".load-plugin-btn").forEach(b => b.remove());
     panelHost.querySelectorAll(".plugin-ui-panel").forEach(p => p.remove());
     // Add tabs for plugins that have ui.html
     for (const p of plugins) {
@@ -245,6 +246,16 @@ async function refreshPluginTabs() {
       panel.appendChild(iframe);
       panelHost.appendChild(panel);
     }
+    // "Load new plugin" button
+    const loadBtn = document.createElement("button");
+    loadBtn.className = "plugin-tab-btn load-plugin-btn";
+    loadBtn.title = "加载新插件";
+    loadBtn.textContent = "+";
+    loadBtn.onclick = () => {
+      const name = prompt("输入插件目录名（如 article-writer）:");
+      if (name) reloadPlugin(name.trim());
+    };
+    tabBar.appendChild(loadBtn);
   } catch {}
 }
 

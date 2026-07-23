@@ -1,0 +1,195 @@
+{
+  "25": {
+    "inputs": {
+      "width": 920,
+      "height": 1536,
+      "batch_size": 1
+    },
+    "class_type": "EmptyLatentImage",
+    "_meta": {
+      "title": "空Latent图像"
+    }
+  },
+  "33": {
+    "inputs": {
+      "samples": [
+        "41",
+        0
+      ],
+      "vae": [
+        "84",
+        2
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE解码"
+    }
+  },
+  "36": {
+    "inputs": {
+      "text": "masterpiece, best quality, absurdres, newest, highres, 1girl, solo, brown hair, long hair, ponytail, pink cap, visor, red leotard, blue jumpsuit, open jacket,explosure shoulder, from_front, standing, smirk, red_accents, sky, sunlight, full body, anime, cel_shading",
+      "clip": [
+        "84",
+        1
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Positive)"
+    }
+  },
+  "38": {
+    "inputs": {
+      "text": [
+        "89",
+        0
+      ],
+      "clip": [
+        "84",
+        1
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Negative)"
+    }
+  },
+  "41": {
+    "inputs": {
+      "seed": 42,
+      "steps": 10,
+      "cfg": 1.5,
+      "sampler_name": "euler_ancestral",
+      "scheduler": "normal",
+      "denoise": 1,
+      "model": [
+        "86",
+        0
+      ],
+      "positive": [
+        "36",
+        0
+      ],
+      "negative": [
+        "38",
+        0
+      ],
+      "latent_image": [
+        "25",
+        0
+      ]
+    },
+    "class_type": "KSampler",
+    "_meta": {
+      "title": "K采样器"
+    }
+  },
+  "50": {
+    "inputs": {
+      "filename_prefix": "ComfyUI",
+      "images": [
+        "33",
+        0
+      ]
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "保存图像"
+    }
+  },
+  "83": {
+    "inputs": {
+      "stop_at_clip_layer": -2,
+      "clip": [
+        "84",
+        1
+      ]
+    },
+    "class_type": "CLIPSetLastLayer",
+    "_meta": {
+      "title": "设置CLIP最后一层"
+    }
+  },
+  "84": {
+    "inputs": {
+      "ckpt_name": "IL\\cocoStyleNoobaiXL_v70.safetensors"
+    },
+    "class_type": "CheckpointLoaderSimple",
+    "_meta": {
+      "title": "Checkpoint加载器（简易）"
+    }
+  },
+  "86": {
+    "inputs": {
+      "__lm_autocomplete_meta_text": {
+        "version": 1,
+        "textWidgetName": "text",
+        "lastAccepted": {
+          "start": 98,
+          "end": 157,
+          "insertedText": "<lora:DynamicPoseIL2att_alpha1.0_rank4_noxattn_900steps:1>,",
+          "textSnapshot": "<lora:lighting_v2:0.90><lora:Matte_Skin_Illustrious_v4:0.80><lora:dmd2-lighting8step_cfg1.5:1.00>,<lora:DynamicPoseIL2att_alpha1.0_rank4_noxattn_900steps:1>,"
+        }
+      },
+      "text": "<lora:lighting_v2:0.90><lora:Matte_Skin_Illustrious_v4:1.00><lora:dmd2-lighting8step_cfg1.5:1.00>, <lora:DynamicPoseIL2att_alpha1.0_rank4_noxattn_900steps:1.00>",
+      "loras": {
+        "__value__": [
+          {
+            "name": "lighting_v2",
+            "strength": "0.90",
+            "active": true,
+            "expanded": false,
+            "clipStrength": "0.90",
+            "locked": false
+          },
+          {
+            "name": "Matte_Skin_Illustrious_v4",
+            "strength": "1.00",
+            "active": true,
+            "expanded": false,
+            "clipStrength": "1.00",
+            "locked": false
+          },
+          {
+            "name": "dmd2-lighting8step_cfg1.5",
+            "strength": 1,
+            "active": true,
+            "expanded": false,
+            "clipStrength": 1,
+            "locked": false
+          },
+          {
+            "name": "DynamicPoseIL2att_alpha1.0_rank4_noxattn_900steps",
+            "strength": "1.00",
+            "active": true,
+            "expanded": false,
+            "clipStrength": "1.00",
+            "locked": false
+          }
+        ]
+      },
+      "model": [
+        "84",
+        0
+      ],
+      "clip": [
+        "84",
+        1
+      ]
+    },
+    "class_type": "Lora Loader (LoraManager)",
+    "_meta": {
+      "title": "Lora Loader (LoraManager)"
+    }
+  },
+  "89": {
+    "inputs": {
+      "negative": "embedding:lazyhand,embedding:lazyloli,embedding:lazyneg"
+    },
+    "class_type": "easy negative",
+    "_meta": {
+      "title": "负面提示词"
+    }
+  }
+}

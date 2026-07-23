@@ -1,0 +1,30 @@
+node_modules/
+dist/
+# User config
+config/platform.json
+plugins/llm-launcher/config.json
+# Runtime directories
+data/
+logs/
+db/
+# Plugin runtime files (DB, credentials, cache)
+plugins/wechat-sub/token.json
+plugins/wechat-sub/ui-state.json
+plugins/wechat-sub/wechat-sub.db
+plugins/wechat-sub/wechat-sub.db-shm
+plugins/wechat-sub/wechat-sub.db-wal
+plugins/wechat-bot/wechat-token.json
+plugins/wechat-bot/wechat-rules.json
+plugins/wechat-bot/qrcode.png
+plugins/x-scrape/images.db
+plugins/x-scrape/images.db-shm
+plugins/x-scrape/images.db-wal
+# Unfinished plugins
+plugins/trace-character/
+# Separate project
+wechat-api/
+# IDE / OS
+.env
+*.log
+.DS_Store
+.claude/

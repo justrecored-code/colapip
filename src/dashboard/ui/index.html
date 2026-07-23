@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VibePractice</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+<!-- Top Bar -->
+<div class="topbar">
+  <span class="logo">VibePractice</span>
+  <div class="pill"><span class="dot" id="llm-dot"></span><span id="llm-text">LLM</span></div>
+  <span id="plugin-tags"></span>
+</div>
+
+<!-- Tabs -->
+<div class="tabs" id="tab-bar">
+  <button class="active" data-tab="dashboard">对话<span class="count" id="chat-count"></span></button>
+  <button data-tab="tasks">任务<span class="count" id="task-count"></span></button>
+  <button data-tab="logs">日志<span class="count" id="log-count"></span></button>
+  <button data-tab="assets">资产</button>
+</div>
+
+<main>
+<!-- Dashboard / Chat -->
+<div id="dashboard" class="panel active">
+  <div class="health-bar">
+    <div class="health-card">
+      <div class="indicator" id="llm-ind"></div>
+      <div><div class="label">Platform LLM</div><div class="value" id="llm-label">检测中...</div></div>
+    </div>
+    <div class="health-card">
+      <div class="value" id="plugin-summary"></div>
+      <div class="label">已加载</div>
+    </div>
+  </div>
+  <div class="chat-container">
+    <div class="chat-header">对话 <span id="queue-indicator" style="font-size:11px;color:var(--text2);margin-left:12px"></span><button onclick="clearChat()" style="float:right;font-size:11px;background:transparent;border:1px solid var(--border);color:var(--text2);padding:3px 10px;border-radius:4px;cursor:pointer">清空</button></div>
+    <div class="chat-body" id="chat-body"></div>
+    <div class="chat-input">
+      <input type="text" id="cmd-input" placeholder="输入消息..." onkeydown="if(event.key==='Enter')submitText()">
+      <button onclick="submitText()">发送</button>
+    </div>
+  </div>
+</div>
+
+<!-- Tasks -->
+<div id="tasks" class="panel">
+  <div class="filter-bar">
+    <button class="filter-pill active" data-filter="active" onclick="setTaskFilter('active')">活跃任务</button>
+    <button class="filter-pill" data-filter="all" onclick="setTaskFilter('all')">全部</button>
+    <button style="margin-left:auto;font-size:12px;padding:5px 16px;border-radius:8px;border:1px solid var(--accent);background:rgba(139,124,246,0.15);color:var(--accent2);cursor:pointer;font:inherit" onclick="openNewTask()">+ 新建任务</button>
+  </div>
+  <div id="task-list"></div>
+</div>
+
+<!-- New Task Modal -->
+<div id="new-task-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:999;align-items:center;justify-content:center">
+  <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:24px;min-width:420px;max-width:520px;box-shadow:0 8px 32px rgba(0,0,0,0.5)">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+      <h3 style="margin:0;font-size:16px">新建任务</h3>
+      <button onclick="closeNewTask()" style="background:none;border:none;color:var(--text2);font-size:18px;cursor:pointer">&times;</button>
+    </div>
+    <label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px">插件</label>
+    <select id="task-plugin-select" onchange="renderTaskForm()" style="width:100%;background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:8px 12px;border-radius:6px;font:inherit;font-size:13px;margin-bottom:14px;outline:none">
+      <option value="">选择插件...</option>
+    </select>
+    <div id="task-form-fields"></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
+      <button onclick="closeNewTask()" style="padding:8px 18px;border-radius:6px;border:1px solid var(--border);background:transparent;color:var(--text2);cursor:pointer;font:inherit;font-size:13px">取消</button>
+      <button onclick="submitNewTask()" style="padding:8px 18px;border-radius:6px;border:none;background:var(--accent);color:#fff;cursor:pointer;font:inherit;font-size:13px;font-weight:600">提交</button>
+    </div>
+  </div>
+</div>
+
+<!-- Logs -->
+<div id="logs-panel" class="panel">
+  <div class="log-toolbar">
+    <select id="log-level" onchange="renderLogs()">
+      <option value="debug">DEBUG</option><option value="info" selected>INFO</option>
+      <option value="warn">WARN</option><option value="error">ERROR</option>
+    </select>
+    <input type="text" id="log-search" placeholder="搜索..." oninput="renderLogs()">
+    <span class="log-count" id="log-count-label"></span>
+  </div>
+  <div id="log-container"></div>
+</div>
+
+<!-- Assets -->
+<div id="assets" class="panel">
+  <div class="asset-toolbar">
+    <select id="asset-type" onchange="renderAssets()">
+      <option value="">全部类型</option>
+      <option value="image">图片</option>
+      <option value="application/json">JSON</option>
+      <option value="text/markdown">Markdown</option>
+    </select>
+    <span class="asset-count" id="asset-count-label"></span>
+  </div>
+  <div class="asset-grid" id="asset-grid"></div>
+</div>
+
+<!-- Plugin panels (populated dynamically) -->
+<div id="plugin-panels" class="panel"></div>
+</main>
+
+<script src="/utils.js"></script>
+<script src="/task-renderer.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>

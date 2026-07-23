@@ -1,0 +1,7 @@
+{
+  "name": "wechat-sub",
+  "version": "1.0.0",
+  "description": "公众号订阅管理 — 搜索/订阅/下载/轮询/分析/推送",
+  "usesPiAgent": true,
+  "skills": ["db_query"]
+}

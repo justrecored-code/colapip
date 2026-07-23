@@ -1,0 +1,7 @@
+{
+  "name": "knowledge-base",
+  "version": "1.0.0",
+  "description": "分子知识库——独立标签条目，搜索+embedding排序",
+  "usesPiAgent": true,
+  "skills": []
+}

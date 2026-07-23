@@ -1,0 +1,216 @@
+<!DOCTYPE html><html lang="zh">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>wechat-sub</title>
+<style>
+  :root { --bg: #1a1a2e; --card: #16213e; --text: #e0e0e0; --text2: #999; --accent: #8b7cf6; --border: #2a2a4a; --red: #f44336; --green: #4caf50; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { font:13px/1.6 system-ui,sans-serif; background:var(--bg); color:var(--text); padding:16px; }
+  h3 { font-size:12px; color:var(--text2); margin:16px 0 8px; text-transform:uppercase; letter-spacing:1px; }
+  .card { background:var(--card); border:1px solid var(--border); border-radius:6px; padding:10px; margin-bottom:6px; }
+  .card .title { font-weight:600; }
+  .card .meta { font-size:11px; color:var(--text2); margin-top:2px; }
+  .row { display:flex; gap:8px; align-items:center; }
+  input, button { font:inherit; padding:6px 10px; border-radius:4px; border:1px solid var(--border); background:var(--card); color:var(--text); }
+  button { cursor:pointer; white-space:nowrap; }
+  button.accent { background:var(--accent); color:#fff; border-color:var(--accent); }
+  button.danger { color:var(--red); border-color:var(--red); }
+  button.small { padding:2px 8px; font-size:11px; }
+  input { flex:1; }
+  .result-item { display:flex; justify-content:space-between; align-items:center; }
+  .toast { position:fixed; bottom:12px; right:12px; padding:8px 14px; border-radius:4px; font-size:12px; z-index:9; }
+  .toast.ok { background:rgba(76,175,80,0.3); color:var(--green); }
+  .toast.err { background:rgba(244,67,54,0.3); color:var(--red); }
+  .login-box { background:rgba(139,124,246,0.05); border:1px solid var(--accent); border-radius:8px; padding:16px; text-align:center; }
+  .login-box img { max-width:180px; border-radius:4px; margin:10px 0; }
+  .login-box .status { font-size:12px; color:var(--text2); margin:6px 0; }
+  .login-box .status.success { color:var(--green); }
+  .login-box .status.error { color:var(--red); }
+  .empty { color:var(--text2); font-style:italic; padding:4px 0; }
+  .dot { width:8px; height:8px; border-radius:50%; display:inline-block; }
+  .dot.on { background:var(--green); }
+  .dot.off { background:var(--red); }
+</style>
+
+<div id="loading">加载中…</div>
+<div id="loginBox" style="display:none"></div>
+<div id="app" style="display:none">
+  <div class="row" style="margin-bottom:12px">
+    <span><span class="dot on"></span> 已登录</span>
+    <button class="small" onclick="showLogin()" style="margin-left:auto">重新登录</button>
+  </div>
+  <h3>🔍 搜索公众号</h3>
+  <div class="row">
+    <input id="searchInput" placeholder="输入公众号名称…" onkeydown="if(event.key==='Enter')search()">
+    <button class="accent" onclick="search()">搜索</button>
+  </div>
+  <div id="searchResults"></div>
+  <h3>📰 已订阅</h3>
+  <div id="subList"><div class="empty">暂无订阅</div></div>
+  <h3>🔄 轮询</h3>
+  <div class="row" style="margin-bottom:8px">
+    <span style="font-size:12px" id="pollStatus">🔄 轮询: --</span>
+    <button onclick="togglePoll()" id="pollBtn" style="margin-left:auto">启动定时</button>
+    <button onclick="doPoll()">立即轮询</button>
+  </div>
+  <div class="row" style="margin-bottom:8px"><button onclick="fetchHistory()" style="width:100%">拉取全部历史</button></div>
+  <h3>📄 最近文章</h3>
+  <div id="articleList"><div class="empty">暂无</div></div>
+</div>
+
+<script>
+const CALL = '/api/plugins/wechat-sub/call';
+let state = { subs:[], articles:[], polling:false, interval:3600, loggedIn:false, loginPort:0 };
+let scanTimer = null;
+
+function toast(msg,ok){ const t=document.createElement('div'); t.className='toast '+(ok?'ok':'err'); t.textContent=msg; document.body.appendChild(t); setTimeout(()=>t.remove(),2500); }
+async function call(params){ const r=await fetch(CALL,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(params)}); return r.json(); }
+function L(url){ return `http://127.0.0.1:${state.loginPort}${url}`; }
+
+async function loadState(){
+  document.getElementById('loading').style.display='block';
+  const [login,list]=await Promise.all([call({action:'login_status'}),call({action:'list'})]);
+  state.loggedIn = login?.data?.loggedIn || false;
+  state.loginPort = login?.data?.loginPort || 0;
+  if(list?.success && list.data?.subscriptions){
+    state.subs = list.data.subscriptions.split('\n').filter(Boolean).map(l=>{ const [f,n,a]=l.split('|'); return {fakeid:f,nickname:n,subscribed_at:a}; });
+  }
+  try {
+    const fr=await fetch('/api/file?path='+encodeURIComponent('plugins/wechat-sub/ui-state.json'));
+    if(fr.ok){ const d=await fr.json(); state.articles=d.articles||[]; state.polling=d.polling||false; state.interval=d.interval||3600; }
+  }catch{}
+  render();
+}
+
+function render(){
+  document.getElementById('loading').style.display='none';
+  if(!state.loggedIn){ showLogin(); return; }
+  document.getElementById('loginBox').style.display='none';
+  document.getElementById('app').style.display='block';
+  const pollEl = document.getElementById('pollStatus');
+  const btnEl = document.getElementById('pollBtn');
+  if (state.polling) {
+    pollEl.innerHTML = `<span class="dot on"></span> 定时轮询运行中 (每${(state.interval/3600).toFixed(1)}h)`;
+    btnEl.textContent = '停止定时';
+    btnEl.className = 'danger';
+  } else {
+    pollEl.innerHTML = `<span class="dot off"></span> 定时轮询未启动`;
+    btnEl.textContent = '启动定时';
+    btnEl.className = '';
+  }
+  if(state.subs.length){
+    document.getElementById('subList').innerHTML = state.subs.map(s=>
+      `<div class="card result-item"><div><div class="title">${esc(s.nickname||s.fakeid)}</div><div class="meta">${s.subscribed_at||''}</div></div><button class="danger small" onclick="unsub('${jesc(s.fakeid||'')}')">退订</button></div>`
+    ).join('');
+  }
+  if(state.articles.length){
+    document.getElementById('articleList').innerHTML = state.articles.slice(0,3).map(a=>
+      `<div class="card"><div class="title">${esc(a.title||'')}</div><div class="meta">${esc(a.author||'')} · ${new Date(a.publish_time).toLocaleDateString()}</div>${a.summary?`<div style="font-size:12px;margin-top:2px">${esc(a.summary)}</div>`:''}</div>`
+    ).join('');
+  }
+}
+
+// ── Login flow ──
+
+function showLogin(){
+  document.getElementById('app').style.display='none';
+  document.getElementById('loginBox').style.display='block';
+  document.getElementById('loginBox').innerHTML = `
+    <div class="login-box">
+      <h3 style="margin:0 0 2px">🔑 扫码登录公众号平台</h3>
+      <div class="status" id="qrStatus">点击下方按钮，获取二维码…</div>
+      <div id="qrImg"></div>
+      <button class="accent" onclick="startLogin()">获取二维码</button>
+    </div>`;
+}
+
+async function startLogin(){
+  if(scanTimer){ clearTimeout(scanTimer); scanTimer=null; }
+  document.getElementById('qrStatus').textContent='正在获取…';
+  document.getElementById('qrStatus').className='status';
+  try {
+    // Create session
+    await fetch(L('/login/start'),{method:'POST',credentials:'include'});
+    // Get QR
+    const qrResp = await fetch(L('/login/qrcode'),{credentials:'include'});
+    if(!qrResp.ok) throw new Error('QR失败');
+    const blob = await qrResp.blob();
+    const url = URL.createObjectURL(blob);
+    document.getElementById('qrImg').innerHTML=`<img src="${url}" alt="QR">`;
+    document.getElementById('qrStatus').textContent='请使用微信扫码';
+    pollScan();
+  }catch(e){
+    document.getElementById('qrStatus').textContent='连接登录服务失败，请重启平台';
+    document.getElementById('qrStatus').className='status error';
+  }
+}
+
+async function pollScan(){
+  try {
+    const r=await fetch(L('/login/scan'),{credentials:'include'});
+    const data=await r.json();
+    if(data.base_resp && data.base_resp.ret!==0){ scanTimer=setTimeout(pollScan,3000); return; }
+    const status=data.status||0;
+    if(status===0){ scanTimer=setTimeout(pollScan,2000); }
+    else if(status===4||status===6){ document.getElementById('qrStatus').textContent='已扫码，请在手机上确认'; scanTimer=setTimeout(pollScan,1500); }
+    else if(status===1){
+      document.getElementById('qrStatus').textContent='登录成功，保存凭证…';
+      document.getElementById('qrStatus').className='status success';
+      await completeLogin();
+    }else if(status===2){
+      document.getElementById('qrStatus').textContent='二维码已过期，点"获取二维码"刷新';
+      document.getElementById('qrStatus').className='status error';
+      document.getElementById('qrImg').innerHTML='';
+    }else{ scanTimer=setTimeout(pollScan,3000); }
+  }catch(e){ scanTimer=setTimeout(pollScan,3000); }
+}
+
+async function completeLogin(){
+  try {
+    // Finish login with WeChat
+    const cr=await fetch(L('/login/complete'),{method:'POST',credentials:'include'});
+    const data=await cr.json();
+    if(data.base_resp && data.base_resp.ret!==0){ throw new Error(data.base_resp.err_msg||'登录失败'); }
+    // Extract token from redirect_url
+    const redirect_url=data.redirect_url||'';
+    const token=new URL(`http://localhost${redirect_url}`).searchParams.get('token')||'';
+    // Get accumulated cookies from login server (not document.cookie — wrong origin)
+    const ckResp=await fetch(L('/login/cookie'),{credentials:'include'});
+    const {cookie}=await ckResp.json();
+    // Save
+    const sr=await fetch(L('/login/save'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token,cookie})});
+    if(sr.ok){ loadState(); }
+    else { document.getElementById('qrStatus').textContent='保存失败'; document.getElementById('qrStatus').className='status error'; }
+  }catch(e){
+    document.getElementById('qrStatus').textContent='登录失败: '+(e.message||'');
+    document.getElementById('qrStatus').className='status error';
+  }
+}
+
+// ── Actions ──
+
+async function search(){
+  const q=document.getElementById('searchInput').value.trim(); if(!q) return;
+  const r=await call({action:'search',query:q});
+  if(!r.success){ toast(r.error,'err'); return; }
+  const items=r.data?.items||[];
+  document.getElementById('searchResults').innerHTML=items.length
+    ? items.map(item=>{ const parts=item.split(' (fakeid: '); const n=parts[0]||''; const f=(parts[1]||'').split(')')[0]||''; return `<div class="card"><div class="result-item"><div><div class="title">${esc(n)}</div><div class="meta">${esc(f)}</div></div><button class="accent small" onclick="sub('${jesc(f)}','${jesc(n)}')">订阅</button></div></div>`; }).join('')
+    : '<div class="empty">无结果</div>';
+}
+async function sub(fid,name){ const r=await call({action:'subscribe',query:fid,nickname:name}); toast(r.success?`已订阅 ${name}`:r.error, r.success); if(r.success) loadState(); }
+async function unsub(fid){ if(!confirm('确认退订？')) return; const r=await call({action:'unsubscribe',query:fid}); toast(r.success?'已退订':r.error, r.success); if(r.success) loadState(); }
+async function doPoll(){ const r=await call({action:'poll'}); toast(r.success?'轮询完成':r.error, r.success); loadState(); }
+async function togglePoll(){
+  if(state.polling){ const r=await call({action:'stop_poll'}); toast(r.success?'已停止':r.error,r.success); }
+  else { const r=await call({action:'start_poll'}); toast(r.success?'已启动':r.error,r.success); }
+  loadState();
+}
+async function fetchHistory(){
+  const resp = await fetch('/api/tasks', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({pluginName:'wechat-sub',params:{action:'fetch_all_history'}}) });
+  const data = await resp.json();
+  toast(data.taskId ? `任务已提交: ${data.taskId}` : '提交失败', !!data.taskId);
+}
+function esc(s){ return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function jesc(s){ return (s||'').replace(/\\/g,'\\\\').replace(/'/g,"\\'"); }
+loadState();
+</script>

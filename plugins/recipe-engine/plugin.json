@@ -1,0 +1,11 @@
+{
+  "name": "recipe-engine",
+  "version": "1.0.0",
+  "description": "图片反推标签 — 提取原图美学特征，ComfyUI 生成 + 独立审计迭代",
+  "usesPiAgent": true,
+  "skills": [],
+  "workflows": [
+    { "key": "basic_anima", "name": "Basic(Anima)", "file": "Basic(Anima).json", "modes": ["generate", "extract"] },
+    { "key": "basic_il", "name": "Basic(IL)", "file": "Basic(IL).json", "modes": ["extract"] }
+  ]
+}

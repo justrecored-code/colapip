@@ -1,0 +1,204 @@
+{
+  "25": {
+    "inputs": {
+      "width": 920,
+      "height": 1536,
+      "batch_size": 1
+    },
+    "class_type": "EmptyLatentImage",
+    "_meta": {
+      "title": "空Latent图像"
+    }
+  },
+  "33": {
+    "inputs": {
+      "samples": [
+        "41",
+        0
+      ],
+      "vae": [
+        "80",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE解码"
+    }
+  },
+  "38": {
+    "inputs": {
+      "text": "worst quality, low quality, score_1, score_2, score_3, artist name,censore,censored,extra breasts,artist name,no face,",
+      "clip": [
+        "120",
+        1
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Negative)"
+    }
+  },
+  "41": {
+    "inputs": {
+      "seed": 995676354754960,
+      "steps": 10,
+      "cfg": 1.5,
+      "sampler_name": "er_sde",
+      "scheduler": "beta",
+      "denoise": 1,
+      "model": [
+        "120",
+        0
+      ],
+      "positive": [
+        "119",
+        0
+      ],
+      "negative": [
+        "38",
+        0
+      ],
+      "latent_image": [
+        "25",
+        0
+      ]
+    },
+    "class_type": "KSampler",
+    "_meta": {
+      "title": "K采样器"
+    }
+  },
+  "50": {
+    "inputs": {
+      "filename_prefix": "ComfyUI",
+      "images": [
+        "33",
+        0
+      ]
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "保存图像"
+    }
+  },
+  "80": {
+    "inputs": {
+      "vae_name": "qwenImageVAE_qwenImageVAE.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "加载VAE"
+    }
+  },
+  "81": {
+    "inputs": {
+      "clip_name": "miaomiaoHarem_anima14_txt.safetensors",
+      "type": "qwen_image",
+      "device": "cpu"
+    },
+    "class_type": "CLIPLoader",
+    "_meta": {
+      "title": "加载CLIP"
+    }
+  },
+  "84": {
+    "inputs": {
+      "stop_at_clip_layer": -2,
+      "clip": [
+        "81",
+        0
+      ]
+    },
+    "class_type": "CLIPSetLastLayer",
+    "_meta": {
+      "title": "设置CLIP最后一层"
+    }
+  },
+  "86": {
+    "inputs": {
+      "unet_name": "miaomiaoHarem_anima14.safetensors",
+      "weight_dtype": "default"
+    },
+    "class_type": "UNETLoader",
+    "_meta": {
+      "title": "UNet加载器"
+    }
+  },
+  "119": {
+    "inputs": {
+      "text": "",
+      "clip": [
+        "120",
+        1
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP文本编码"
+    }
+  },
+  "120": {
+    "inputs": {
+      "__lm_autocomplete_meta_text": {
+        "version": 1,
+        "textWidgetName": "text",
+        "lastAccepted": {
+          "start": 80,
+          "end": 104,
+          "insertedText": "<lora:MeIoN_V1_Anima:1>,",
+          "textSnapshot": "<lora:sky02Lightv2:0.80>, <lora:anima-turbo-lora-v0.2:1.00>, <lora:sky07v1:0.70><lora:MeIoN_V1_Anima:1>,"
+        }
+      },
+      "text": "<lora:sky02Lightv2:0.80>, <lora:anima-turbo-lora-v0.2:1.00>, <lora:sky07v1:0.50><lora:MeIoN_V1_Anima:0.50>",
+      "loras": {
+        "__value__": [
+          {
+            "name": "sky02Lightv2",
+            "strength": "0.80",
+            "active": true,
+            "expanded": false,
+            "clipStrength": "0.80",
+            "locked": false
+          },
+          {
+            "name": "anima-turbo-lora-v0.2",
+            "strength": 1,
+            "active": true,
+            "expanded": false,
+            "clipStrength": 1,
+            "locked": false
+          },
+          {
+            "name": "sky07v1",
+            "strength": "0.50",
+            "active": true,
+            "expanded": false,
+            "clipStrength": "0.50",
+            "locked": false
+          },
+          {
+            "name": "MeIoN_V1_Anima",
+            "strength": "0.50",
+            "active": true,
+            "expanded": false,
+            "clipStrength": "0.50",
+            "locked": false
+          }
+        ]
+      },
+      "model": [
+        "86",
+        0
+      ],
+      "clip": [
+        "81",
+        0
+      ]
+    },
+    "class_type": "Lora Loader (LoraManager)",
+    "_meta": {
+      "title": "Lora Loader (LoraManager)"
+    }
+  }
+}

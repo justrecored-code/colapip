@@ -5,7 +5,7 @@
 import { execSync } from "child_process";
 import fs from "fs-extra";
 import path from "path";
-import { PLUGINS_DIR, PLUGINS_MANIFEST, SKILLS_DIR, ROOT, loadConfig, type PlatformConfig } from "./config.js";
+import { PLUGINS_DIR, SKILLS_DIR, ROOT, loadConfig, type PlatformConfig } from "./config.js";
 import {
   createTask, updateTaskState, getPendingAndRunningTasks, getAllTasks, getTaskById,
   createAsset, deleteTask, type TaskRow,
@@ -141,19 +141,29 @@ class PluginManager {
   async scanAndRegister(): Promise<void> {
     fs.ensureDirSync(PLUGINS_DIR);
 
-    // Clone missing plugin repos from manifest
-    if (fs.existsSync(PLUGINS_MANIFEST)) {
-      const manifest = fs.readJSONSync(PLUGINS_MANIFEST) as Array<{ name: string; repo?: string }>;
-      for (const entry of manifest) {
-        const targetDir = path.join(PLUGINS_DIR, entry.name);
-        if (fs.existsSync(targetDir)) continue;
-        if (!entry.repo) { logger.warn(`Skipping ${entry.name}: no repo`, "plugin-manager"); continue; }
-        logger.info(`${entry.name}: cloning ${entry.repo}...`, "plugin-manager");
-        try {
-          execSync(`git clone ${entry.repo} "${targetDir}"`, { stdio: "inherit" });
-        } catch (e) {
-          logger.error(`${entry.name}: clone failed — ${(e as Error).message}`, "plugin-manager");
+    // Auto-discover plugins from GitHub
+    const cfg = loadConfig();
+    if (cfg.pluginRegistry) {
+      try {
+        const resp = execSync(
+          `curl -sL "https://api.github.com/users/${cfg.pluginRegistry}/repos?per_page=100"`,
+          { encoding: "utf-8", timeout: 10000 }
+        );
+        const repos = JSON.parse(resp) as Array<{ name: string; clone_url: string }>;
+        for (const repo of repos) {
+          if (!repo.name.startsWith("colapip-")) continue;
+          const pluginName = repo.name.slice("colapip-".length);
+          const targetDir = path.join(PLUGINS_DIR, pluginName);
+          if (fs.existsSync(targetDir)) continue;
+          logger.info(`${pluginName}: cloning ${repo.clone_url}...`, "plugin-manager");
+          try {
+            execSync(`git clone ${repo.clone_url} "${targetDir}"`, { stdio: "inherit" });
+          } catch (e) {
+            logger.error(`${pluginName}: clone failed — ${(e as Error).message}`, "plugin-manager");
+          }
         }
+      } catch (e) {
+        logger.warn(`Failed to fetch plugin registry: ${(e as Error).message}`, "plugin-manager");
       }
     }
 
@@ -583,17 +593,17 @@ class PluginManager {
 
     let pluginDir = path.join(PLUGINS_DIR, name);
     if (!fs.existsSync(pluginDir)) {
-      // Try clone from manifest
-      if (fs.existsSync(PLUGINS_MANIFEST)) {
-        const manifest = fs.readJSONSync(PLUGINS_MANIFEST) as Array<{ name: string; repo?: string }>;
-        const entry = manifest.find(e => e.name === name);
-        if (entry?.repo) {
-          logger.info(`${name}: cloning ${entry.repo}...`, "plugin-manager");
-          try {
-            execSync(`git clone ${entry.repo} "${pluginDir}"`, { stdio: "inherit" });
-          } catch (e) {
-            return { ok: false, error: `clone 失败: ${(e as Error).message}` };
-          }
+      // Try clone from GitHub
+      const cfg = loadConfig();
+      const repoUrl = cfg.pluginRegistry
+        ? `https://github.com/${cfg.pluginRegistry}/colapip-${name}`
+        : null;
+      if (repoUrl) {
+        logger.info(`${name}: cloning ${repoUrl}...`, "plugin-manager");
+        try {
+          execSync(`git clone ${repoUrl} "${pluginDir}"`, { stdio: "inherit" });
+        } catch (e) {
+          return { ok: false, error: `clone 失败: ${(e as Error).message}` };
         }
       }
       if (!fs.existsSync(pluginDir)) return { ok: false, error: `插件目录不存在: ${pluginDir}` };

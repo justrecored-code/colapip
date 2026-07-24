@@ -14,7 +14,6 @@ export const DATA_DIR = path.join(ROOT, "data");
 const ASSETS_DIR = path.join(DATA_DIR, "assets");
 export const SKILLS_DIR = path.join(ROOT, "src", "platform-skills");
 export const DB_PATH = path.join(ROOT, "db", "platform.db");
-export const PLUGINS_MANIFEST = path.join(ROOT, "config", "plugins.json");
 
 // ============================================================================
 // Types
@@ -31,6 +30,7 @@ export interface PlatformConfig {
     port: number;
     host: string;
   };
+  pluginRegistry?: string;
 }
 
 // ============================================================================
@@ -63,6 +63,7 @@ export function loadConfig(): PlatformConfig {
       port: fileConfig.dashboard?.port ?? 3000,
       host: fileConfig.dashboard?.host ?? "127.0.0.1",
     },
+    pluginRegistry: fileConfig.pluginRegistry,
   };
 
   return _config;

@@ -21,5 +21,3 @@
 - ERR_SERVICE_DOWN: 暂停任务
 - ERR_AUTH/ERR_CONTEXT_LIMIT: 告知用户,不操作
 - 其他: 告知用户
-
-取消任务必须用户要求。Agent不得主动取消。

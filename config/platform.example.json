@@ -7,5 +7,6 @@
   "dashboard": {
     "port": 15001,
     "host": "127.0.0.1"
-  }
+  },
+  "pluginRegistry": "your-github-username"
 }

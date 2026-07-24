@@ -19,7 +19,7 @@ function md2html(s) {
     .replace(/```(\w*)\n?([\s\S]*?)```/g, "<pre><code>$2</code></pre>")
     .replace(/^> (.+)/gm, "<blockquote>$1</blockquote>")
     .replace(/^---$/gm, "<hr>")
-    .replace(/!\[(.+?)\]\((.+?)\)/g, '<img src="$2" alt="$1" style="max-width:100%;border-radius:8px;margin:4px 0">')
+    .replace(/!\[(.+?)\]\((.+?)\)/g, '<img src="$2" alt="$1" style="max-width:240px;max-height:360px;border-radius:8px;margin:4px 0">')
     .replace(/\n/g, "<br>");
 }
 
@@ -55,7 +55,7 @@ function previewAsset(filepath, type) {
   if (type.startsWith("image")) {
     const img = document.createElement("img");
     img.src = "/api/file?path=" + encodeURIComponent(filepath);
-    img.style.maxWidth = "100%"; img.style.maxHeight = "70vh"; img.style.objectFit = "contain";
+    img.style.maxWidth = "240px"; img.style.maxHeight = "360px"; img.style.objectFit = "contain";
     box.appendChild(img);
   } else {
     fetch("/api/file?path=" + encodeURIComponent(filepath))

@@ -331,6 +331,13 @@ import { openPluginDB } from "../../src/core/db.js";
 const db = openPluginDB(path.join(_rootDir, "my-plugin.db"));
 ```
 
+### 读取平台聊天记录
+
+```typescript
+import { getChatHistory } from "../../src/core/db.js";
+const history = getChatHistory(50);  // 只读，返回最近 N 条
+```
+
 ### 日志
 
 **平台统一管理。** 直接 `ctx.logger`，平台自动写 `logs/<plugin>/`。

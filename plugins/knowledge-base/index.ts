@@ -224,17 +224,24 @@ const knowledgeBasePlugin: Plugin = {
         }
         const ad = path.join(ROOT, "data", "assets", "wechat-articles");
         if ((src === "all" || src === "articles") && fs.existsSync(ad)) {
+          const files: { fp: string; name: string; date: string }[] = [];
           function walk(d: string) {
             for (const e of fs.readdirSync(d)) {
               const fp = path.join(d, e);
               if (fs.statSync(fp).isDirectory()) { walk(fp); continue; }
               if (!e.endsWith(".md")) continue;
-              const md = fs.readFileSync(fp, "utf-8");
-              const title = (md.match(/^#\s+(.+)/m) || [])[1] || e;
-              sources.push(JSON.stringify({ source: fp, title, excerpt: md.slice(0, 1500) }));
+              const dateMatch = e.match(/^(\d{4}-\d{2}-\d{2})-/);
+              files.push({ fp, name: e, date: dateMatch?.[1] ?? "0000-00-00" });
             }
           }
           walk(ad);
+          // Sort newest first by date prefix in filename
+          files.sort((a, b) => b.date.localeCompare(a.date));
+          for (const f of files) {
+            const md = fs.readFileSync(f.fp, "utf-8");
+            const title = (md.match(/^#\s+(.+)/m) || [])[1] || f.name;
+            sources.push(JSON.stringify({ source: f.fp, title, excerpt: md.slice(0, 1500) }));
+          }
         }
         if (sources.length === 0) return { success: false, error: "无可用数据源" };
         ctx.logger.info(`待分析: ${sources.length} 条内容`);

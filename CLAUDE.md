@@ -48,16 +48,17 @@ LLM Adapter 模式:
 任务提交:
   submitTask(plugin, params) → 并发控制（插件级 maxConcurrent，默认 1）
     params.notify 默认 false。Agent 需要任务通知时显式传 notify: true。
-    若 submitTask 调用时 _replyToContext.plugin 存在（由 _agentHandler 设置），
+    若 submitTask 调用时 _replyToContext 存在（由 _agentHandler 设置），
     平台自动注入 _replyTo 到 params 并强设 notify: true，任务完成时通知带上路由信息。
   参数校验: 平台根据 INPUT.md 的 (必需) 标记 + ### action 分段校验，缺参拒绝提交。
 
 Platform LLM（Chat Agent）:
   Dashboard Agent = 平台统一大脑，所有异步 Agent 调用共享此实例。
-  systemPrompt 来自 config/agent-prompt.md，thinkingLevel: xhigh。
+  systemPrompt 来自 config/agent-prompt.md（角色：指挥官，不生成内容，只调度插件），thinkingLevel: xhigh。
   插件通过 ctx.output.agent("dashboard", { prompt, replyTo }) 调用。
-  _agentHandler 内部有消息队列——Agent 忙时不丢弃，排队等待处理。
-  Agent 返回 "already processing" 时自动 requeue（3s 延迟重试），不丢消息。
+  使用模块级 agentQueue 队列——Agent 忙时不丢弃，排队等待处理。
+  Dashboard 聊天 API（/api/tasks）也走同一条队列（返回 { type: "queued" }），WebSocket 异步投递回复。
+  Agent 报错时自动 requeue（3s 延迟重试），不丢消息。
 
 插件输出:
   ctx.output.platform(data) → WebSocket → Dashboard 展示
@@ -101,10 +102,10 @@ Agent 使用模式:
 | `src/core/plugin.ts` | Plugin 接口 + PluginContext（llm/eventBus/logger/createAsset/aborted/output）。含 ToolDef/Task/TaskResult 类型。`output.agent` 文档化两种 Agent 模式 |
 | `src/core/plugin-manager.ts` | 扫描/注册/校验/派发/并发控制/恢复/取消/热重载。含 ToolRegistry + `createPluginContext` 共享工厂（dispatch + recovery 共用）+ `_replyToContext` 上下文存储。`submitTask` 中根据 `_replyToContext` 自动注入 `_replyTo` 到 params |
 | `src/core/logger.ts` | 平台日志（文件 `logs/platform/platform.log` + EventBus `log` 事件，本地时间）。`setEventBus()` 须在 `initDB()` 之前调用 |
-| `src/dashboard/server.ts` | Express+WebSocket。Dashboard Agent（Pi Agent + 13 个平台工具）+ 插件 ownSkills 自动注册。`_agentHandler` 含消息队列（Agent 忙时不丢弃），`deliverReply` 按 `replyTo.plugin` 回传回复给插件（零插件特定代码）。API 路由 + 静态 UI |
+| `src/dashboard/server.ts` | Express+WebSocket。Dashboard Agent（Pi Agent + 13 个平台工具）+ 插件 ownSkills 自动注册。模块级 `agentQueue` + `runNextQueued` 排队处理 Agent 请求，`deliverReply` 按 `replyTo.plugin` 回传回复给插件（零插件特定代码）。API 路由 + 静态 UI |
 | `src/dashboard/ui/` | SPA：index.html + style.css + utils.js + task-renderer.js + app.js + plugin-log.html。按 `<script>` 顺序加载，支持插件自定义 UI 标签（动态 iframe） |
 | `src/platform-skills/` | 共享工具文件（sleep.ts, db_query.ts）。ToolRegistry 启动时动态 import。注意：`clear_context` 是 Dashboard Agent 工具（在 server.ts 内联），不是平台共享工具 |
-| `tests/` | 3 个测试文件：core.test.ts, full-suite.test.ts, patch-workflow.test.ts。需单线程跑避开 SQLite 锁 |
+| `tests/` | 3 个测试文件。core.test.ts（EventBus + Task CRUD），full-suite.test.ts（Config/Logger/DB/LLM/PluginManager/Dashboard/Skills 全覆盖），patch-workflow.test.ts（ComfyUI 工作流补丁逻辑）。需单线程跑避开 SQLite 锁 |
 | `config/` | platform.json + agent-prompt.md。不含插件配置 |
 
 ## 当前插件
@@ -117,6 +118,8 @@ Agent 使用模式:
 | wechat-sub | 长生命周期 | 公众号订阅。搜索/下载/AI摘要/定时轮询/推送 |
 | llm-launcher | 长生命周期 | LLM 进程管理。spawn/监控/崩溃重启 |
 | knowledge-base | 任务型 | 分子知识库。提取Agent→审计Agent→增量写入。Obsidian 可编辑 |
+| article-writer | 任务型 | 公众号文章写作。自建 Agent，大纲→正文→润色三轮审计 |
+| trace-character | 任务型 | 图片角色溯源。VLM特征提取→以图搜图→聚合识别→出处定位 |
 
 ## Dashboard Agent 工具
 
@@ -134,7 +137,7 @@ db/platform.db        ← 平台数据库（tasks + assets + chat_history）
 logs/                 ← 所有日志（平台+插件，按名分目录）
 data/                 ← 插件数据 + 资产（无日志）
 config/               ← platform.json + agent-prompt.md
-plugins/              ← 6 个插件（每个含 plugin.json + INPUT.md + OUTPUT.md + index.ts）
+plugins/              ← 8 个插件（每个含 plugin.json + INPUT.md + OUTPUT.md + index.ts）
 ```
 
 - 日志由平台统一管理：`ctx.logger.info()` 自动写 `logs/<plugin>/<plugin>-<ts>.log`（session log，每插件最近 5 个）+ 推 EventBus
@@ -142,10 +145,11 @@ plugins/              ← 6 个插件（每个含 plugin.json + INPUT.md + OUTPU
 
 ## Important Notes
 
+- 许可证：AGPL-3.0
 - 平台不 import 插件代码。Agent 工具通过 `submitTask("name", params)` 调用
 - **replyTo 路由**: `_agentHandler` 处理后通过 `deliverReply` 分发——`replyTo.dashboard` → broadcast，`replyTo.plugin` → `submitTask(plugin, { action: "deliver_reply", content, pluginData })` 交回插件处理。server.ts 零插件特定代码
 - **deliver_reply 模式**: 需要从 Agent 接收回复的插件，在 `execute()` 中处理 `action: "deliver_reply"`，从 `content` 和 `pluginData` 自行提取文本/文件并投递
-- 插件可安全 import 平台路径常量（`ROOT`, `DATA_DIR`, `PLUGINS_DIR` 等）和 `loadConfig()`——这些来自 `src/core/config.js`，不耦合插件
+- 插件允许 import 的平台模块：`src/core/config.js`（路径常量 + `loadConfig()`）、`src/core/db.js`（`updateTaskState`、`openPluginDB`、`getChatHistory`——只读）、`src/core/error-codes.js`（错误码常量 + `errMsg()`）、`src/core/llm.js`（`createAgentModel()`）、`src/core/plugin-manager.js`（`pluginOutput()`、`pluginManager`——仅长生命周期插件在 `ctx` 不可用时使用）。不要在插件中导入未在此列出的平台内部函数
 - 插件路径用 `ROOT` 拼，不用 `process.cwd()`
 - 插件日志：**平台统一管理**——`ctx.logger.info()` 自动写 `logs/<plugin>/<plugin>-<ts>.log` + 推面板。不做 `plog()`/`openLog()`
 - 批量任务写 checkpoint，平台恢复时合并到 `params._resumeFrom`，插件在 execute 中读取断点
@@ -159,6 +163,12 @@ plugins/              ← 6 个插件（每个含 plugin.json + INPUT.md + OUTPU
 - tsconfig: ES2022/NodeNext/strict。tsx 直跑，不编译。`noUncheckedIndexedAccess` + `noImplicitOverride` 开启
 - 测试: 推荐 `vitest run --pool=forks --poolOptions.forks.singleFork`（单线程避 SQLite 锁）
 - DB 层使用 better-sqlite3（同步 native 绑定，WAL 模式），**不依赖系统 sqlite3 CLI**。所有 DB 操作必须通过 `db.ts` 导出的函数，不要在外部直接执行 SQL
+
+## 已知技术债
+
+`violations-audit.json` 记录了代码审查发现（大部分已在 `246f14f` 中修复）：
+
+- **article-writer**：使用 `getChatHistory` 读取平台聊天记录——已纳入插件允许导入清单（只读函数，合法用例）
 
 ## Dashboard UI 注意事项
 

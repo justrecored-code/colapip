@@ -276,7 +276,7 @@ class PluginManager {
     if (!("notify" in params)) params.notify = false;
 
     // If a plugin context is active, auto-inject routing so task completion notifies the right channel
-    if (_replyToContext?.plugin) {
+    if (_replyToContext) {
       params.notify = true;
       params._replyTo = _replyToContext;
     }

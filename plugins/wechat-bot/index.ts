@@ -227,8 +227,7 @@ async function connectFlow(task: Task, ctx: PluginContext): Promise<TaskResult> 
       }
       await sleep(1000);
     }
-    _status = "idle";
-    return { success: false, error: "扫码超时" };
+    _status = "error";
   } catch (e) {
     _status = "error";
     return { success: false, error: (e as Error).message };
@@ -345,8 +344,7 @@ const wechatBotPlugin: Plugin = {
         return { success: true, data: { status: "disconnected" } };
       }
       const result = await connectFlow(task, ctx);
-      if (!result.success) return result;
-      // Stay running until disconnect or abort
+      // Always stay running — even on failure, keep the task alive for retry/disconnect
       while (_status !== "idle" && !ctx.aborted) await new Promise(r => setTimeout(r, 2000));
       return { success: true, data: { status: "disconnected" } };
     }

@@ -32,7 +32,8 @@ async function submitText() {
   try {
     const r = await fetch("/api/tasks", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({text}) });
     const d = await r.json();
-    if (d.type === "chat") addMsg("assistant", d.reply);
+    if (d.type === "queued") { /* WebSocket will deliver reply */ }
+    else if (d.type === "chat") addMsg("assistant", d.reply);
     else if (d.type === "task") addMsg("assistant", d.reply);
     else addMsg("assistant", d.error || "error");
   } catch(e) { addMsg("assistant", "请求失败: " + e.message); }
@@ -56,7 +57,7 @@ function addMsg(role, text) {
         }
         else if (b.type === "text") html += `<div class="md">${md2html(b.text)}</div>`;
         else if (b.type === "toolCall") html += `<div class="toolcall">🔧 ${b.name}(${JSON.stringify(b.arguments)})</div>`;
-        else if (b.type === "image_url" && b.image_url) html += `<img src="${b.image_url.url}" style="max-width:280px;border-radius:8px;margin:4px 0">`;
+        else if (b.type === "image_url" && b.image_url) html += `<img src="${b.image_url.url}" style="max-width:240px;max-height:360px;border-radius:8px;margin:4px 0">`;
         else html += `<div>${esc(JSON.stringify(b))}</div>`;
       }
       div.innerHTML = html || esc(text);

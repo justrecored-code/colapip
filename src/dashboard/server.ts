@@ -360,27 +360,65 @@ app.get("/api/assets", async (_req, res) => {
 // Chat (multi-turn Agent)
 // ============================================================================
 
+// ── Agent message queue (shared by Dashboard chat + plugin output.agent) ──
+type QueuedItem = { pluginName: string; prompt: string; replyTo: any };
+const agentQueue: QueuedItem[] = [];
+let queueRunning = false;
+
+function deliverReply(agent: Agent, replyTo: any): void {
+  const msgs: any[] = (agent.state as any).messages ?? [];
+  const lastMsg = [...msgs].reverse().find((m: any) => m.role === "assistant");
+  if (!lastMsg?.content) return;
+
+  if (!replyTo || replyTo.dashboard) {
+    saveChatMessage("assistant", JSON.stringify(lastMsg.content));
+    broadcast("plugin.output", { type: "agent.reply", blocks: lastMsg.content });
+  }
+
+  if (replyTo?.plugin) {
+    pluginManager.submitTask(replyTo.plugin, {
+      action: "deliver_reply",
+      content: lastMsg.content,
+      pluginData: replyTo.pluginData,
+    }).catch(e => logger.error(`deliverReply 失败: ${(e as Error).message}`, "dashboard"));
+  }
+}
+
+function runNextQueued(): void {
+  if (agentQueue.length === 0) { queueRunning = false; return; }
+  queueRunning = true;
+  const item = agentQueue.shift()!;
+  const agent = item.pluginName === "dashboard" ? getAgent() : (item.pluginName ? getPluginAgent(item.pluginName) : getAgent());
+  logger.info(`[agent-handler] ${item.pluginName}: dequeued, prompt len=${item.prompt.length}`, "dashboard");
+  const prevContext = getReplyToContext();
+  if (item.replyTo) setReplyToContext(item.replyTo);
+  Promise.resolve()
+    .then(() => agent.prompt(item.prompt))
+    .then(() => {
+      setReplyToContext(prevContext);
+      logger.info(`[agent-handler] ${item.pluginName}: prompt done`, "dashboard");
+      deliverReply(agent, item.replyTo);
+      runNextQueued();
+    })
+    .catch((e) => {
+      setReplyToContext(prevContext);
+      const msg = (e as Error).message;
+      logger.error(`[agent-handler] ${item.pluginName}: ${msg}, requeue`, "dashboard");
+      agentQueue.unshift(item);
+      setTimeout(runNextQueued, 3000);
+    });
+}
+
 app.post("/api/tasks", async (req, res) => {
   try {
     const { pluginName, params, text } = req.body;
 
     if (text && !pluginName) {
-      const agent = getAgent();
-
-      await agent.prompt(text);
-      await agent.waitForIdle();
-
-      // Only return the LATEST assistant message blocks (not full history)
-      const msgs: any[] = (agent.state as any).messages ?? [];
-      const lastMsg = [...msgs].reverse().find((m: any) => m.role === "assistant");
-      const replyBlocks = lastMsg?.content?.filter((b: any) => b.type === "text") ?? [];
-
       saveChatMessage("user", text);
-      const replyJson = JSON.stringify(replyBlocks);
-      saveChatMessage("assistant", replyJson);
-
+      agentQueue.push({ pluginName: "dashboard", prompt: text, replyTo: { dashboard: true } });
+      if (!queueRunning) runNextQueued();
       getPlatformLLM().setStatus("online");
-      res.json({ type: "chat", reply: replyJson });
+      res.json({ type: "queued" });
       return;
     }
 
@@ -413,56 +451,6 @@ export function startDashboard() {
       }
     }
   });
-
-  // Register plugin output handlers: chat → WebSocket, agent → Dashboard Agent
-  // Queue ensures messages are never dropped when Agent is busy
-  type QueuedItem = { pluginName: string; prompt: string; replyTo: any };
-  const agentQueue: QueuedItem[] = [];
-  let queueRunning = false;
-
-  function deliverReply(agent: Agent, replyTo: any): void {
-    const msgs: any[] = (agent.state as any).messages ?? [];
-    const lastMsg = [...msgs].reverse().find((m: any) => m.role === "assistant");
-    if (!lastMsg?.content) return;
-
-    if (!replyTo || replyTo.dashboard) {
-      broadcast("plugin.output", { type: "agent.reply", blocks: lastMsg.content });
-    }
-
-    // Generic: deliver reply to a plugin for handling (e.g., wechat-bot sends to WeChat)
-    if (replyTo?.plugin) {
-      pluginManager.submitTask(replyTo.plugin, {
-        action: "deliver_reply",
-        content: lastMsg.content,
-        pluginData: replyTo.pluginData,
-      }).catch(e => logger.error(`deliverReply 失败: ${(e as Error).message}`, "dashboard"));
-    }
-  }
-
-  function runNextQueued(): void {
-    if (agentQueue.length === 0) { queueRunning = false; return; }
-    queueRunning = true;
-    const item = agentQueue.shift()!;
-    const agent = item.pluginName === "dashboard" ? getAgent() : (item.pluginName ? getPluginAgent(item.pluginName) : getAgent());
-    logger.info(`[agent-handler] ${item.pluginName}: dequeued, prompt len=${item.prompt.length}`, "dashboard");
-    const prevContext = getReplyToContext();
-    if (item.replyTo) setReplyToContext(item.replyTo);
-    Promise.resolve()
-      .then(() => agent.prompt(item.prompt))
-      .then(() => {
-        setReplyToContext(prevContext);
-        logger.info(`[agent-handler] ${item.pluginName}: prompt done`, "dashboard");
-        deliverReply(agent, item.replyTo);
-        runNextQueued();
-      })
-      .catch((e) => {
-        setReplyToContext(prevContext);
-        const msg = (e as Error).message;
-        logger.error(`[agent-handler] ${item.pluginName}: ${msg}, requeue`, "dashboard");
-        agentQueue.unshift(item);
-        setTimeout(runNextQueued, 3000);
-      });
-  }
 
   setPluginOutputHandlers(
     (data) => broadcast("plugin.output", data),

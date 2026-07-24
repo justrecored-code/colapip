@@ -1,7 +1,0 @@
-{
-  "name": "article-writer",
-  "version": "1.0.0",
-  "description": "公众号文章写作——大纲→审计→正文→审计→润色+图片提示",
-  "usesPiAgent": true,
-  "skills": ["db_query"]
-}

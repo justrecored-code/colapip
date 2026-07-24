@@ -1,8 +1,0 @@
-{
-  "name": "wechat-bot",
-  "version": "1.0.0",
-  "description": "微信个人号消息通道 — 通过 iLink Bot 协议收发消息",
-  "usesPiAgent": true,
-  "type": "service",
-  "skills": []
-}

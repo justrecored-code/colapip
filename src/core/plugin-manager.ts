@@ -143,10 +143,14 @@ class PluginManager {
 
     // Auto-discover plugins from GitHub
     const cfg = loadConfig();
-    if (cfg.pluginRegistry) {
+    const sources: string[] = cfg.pluginRegistry
+      ? (Array.isArray(cfg.pluginRegistry) ? cfg.pluginRegistry : [cfg.pluginRegistry])
+      : [];
+    for (const src of sources) {
+      const owner = src.replace(/^https?:\/\/github\.com\//, "").replace(/\/$/, "");
       try {
         const resp = execSync(
-          `curl -sL "https://api.github.com/users/${cfg.pluginRegistry}/repos?per_page=100"`,
+          `curl -sL "https://api.github.com/users/${owner}/repos?per_page=100"`,
           { encoding: "utf-8", timeout: 10000 }
         );
         const repos = JSON.parse(resp) as Array<{ name: string; clone_url: string }>;
@@ -163,7 +167,7 @@ class PluginManager {
           }
         }
       } catch (e) {
-        logger.warn(`Failed to fetch plugin registry: ${(e as Error).message}`, "plugin-manager");
+        logger.warn(`Plugin registry ${owner}: ${(e as Error).message}`, "plugin-manager");
       }
     }
 
@@ -593,18 +597,19 @@ class PluginManager {
 
     let pluginDir = path.join(PLUGINS_DIR, name);
     if (!fs.existsSync(pluginDir)) {
-      // Try clone from GitHub
+      // Try clone from plugin registries
       const cfg = loadConfig();
-      const repoUrl = cfg.pluginRegistry
-        ? `https://github.com/${cfg.pluginRegistry}/colapip-${name}`
-        : null;
-      if (repoUrl) {
-        logger.info(`${name}: cloning ${repoUrl}...`, "plugin-manager");
+      const sources: string[] = cfg.pluginRegistry
+        ? (Array.isArray(cfg.pluginRegistry) ? cfg.pluginRegistry : [cfg.pluginRegistry])
+        : [];
+      for (const src of sources) {
+        const owner = src.replace(/^https?:\/\/github\.com\//, "").replace(/\/$/, "");
+        const repoUrl = `https://github.com/${owner}/colapip-${name}`;
+        logger.info(`${name}: trying ${repoUrl}...`, "plugin-manager");
         try {
           execSync(`git clone ${repoUrl} "${pluginDir}"`, { stdio: "inherit" });
-        } catch (e) {
-          return { ok: false, error: `clone 失败: ${(e as Error).message}` };
-        }
+          break;
+        } catch { /* try next source */ }
       }
       if (!fs.existsSync(pluginDir)) return { ok: false, error: `插件目录不存在: ${pluginDir}` };
     }

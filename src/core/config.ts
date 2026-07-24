@@ -30,7 +30,7 @@ export interface PlatformConfig {
     port: number;
     host: string;
   };
-  pluginRegistry?: string;
+  pluginRegistry?: string | string[];
 }
 
 // ============================================================================

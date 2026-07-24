@@ -284,6 +284,51 @@ async function loadHistory() {
 }
 
 // ── Init ──
+// ── Plugin Marketplace ──
+async function showAvailablePlugins() {
+  const modal = document.getElementById("install-modal");
+  modal.style.display = "flex";
+  document.getElementById("available-list").innerHTML = "加载中...";
+  try {
+    const r = await fetch("/api/plugins/available");
+    const plugins = await r.json();
+    if (!plugins.length) {
+      document.getElementById("available-list").innerHTML = '<div style="color:var(--text2)">没有发现新插件。检查 platform.json 中的 pluginRegistry 配置。</div>';
+      return;
+    }
+    document.getElementById("available-list").innerHTML = plugins.map(p =>
+      `<div class="card" style="margin-bottom:8px;display:flex;justify-content:space-between;align-items:center">
+        <div>
+          <div style="font-weight:600">${esc(p.name)}</div>
+          <div style="font-size:11px;color:var(--text2)">${esc(p.description || "")}</div>
+        </div>
+        <button onclick="installPlugin('${esc(p.repo)}','${esc(p.name)}')" style="font-size:11px;padding:4px 12px;border-radius:4px;border:1px solid var(--accent);background:rgba(139,124,246,0.15);color:var(--accent2);cursor:pointer">安装</button>
+      </div>`
+    ).join("");
+  } catch(e) {
+    document.getElementById("available-list").innerHTML = '<div style="color:var(--red)">加载失败: ' + esc(e.message) + '</div>';
+  }
+}
+
+async function installPlugin(repo, name) {
+  try {
+    const r = await fetch("/api/plugins/install", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({ repo, name })
+    });
+    const d = await r.json();
+    if (d.ok) {
+      alert(name + " 安装成功！");
+      document.getElementById("install-modal").style.display = "none";
+      refreshPlugins();
+      refreshPluginTabs();
+    } else {
+      alert("安装失败: " + (d.error || ""));
+    }
+  } catch(e) { alert("安装失败: " + e.message); }
+}
+
 loadHistory();
 checkHealth(); setInterval(checkHealth, 5000);
 refreshPlugins(); refreshPluginTabs();

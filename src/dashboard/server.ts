@@ -330,6 +330,17 @@ app.post("/api/plugins/:name/call", async (req, res) => {
   }
 });
 
+app.get("/api/plugins/available", (_req, res) => {
+  res.json(pluginManager.listAvailable());
+});
+
+app.post("/api/plugins/install", async (req, res) => {
+  const { repo, name } = req.body || {};
+  if (!repo || !name) { res.status(400).json({ ok: false, error: "缺少 repo/name" }); return; }
+  const result = await pluginManager.installPlugin(repo, name);
+  res.json(result);
+});
+
 app.get("/api/assets", async (_req, res) => {
   const rows: any[] = [];
   const dataRoot = path.join(ROOT, "data");

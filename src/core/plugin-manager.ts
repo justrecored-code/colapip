@@ -141,36 +141,6 @@ class PluginManager {
   async scanAndRegister(): Promise<void> {
     fs.ensureDirSync(PLUGINS_DIR);
 
-    // Auto-discover plugins from GitHub
-    const cfg = loadConfig();
-    const sources: string[] = cfg.pluginRegistry
-      ? (Array.isArray(cfg.pluginRegistry) ? cfg.pluginRegistry : [cfg.pluginRegistry])
-      : [];
-    for (const src of sources) {
-      const owner = src.replace(/^https?:\/\/github\.com\//, "").replace(/\/$/, "");
-      try {
-        const resp = execSync(
-          `curl -sL "https://api.github.com/users/${owner}/repos?per_page=100"`,
-          { encoding: "utf-8", timeout: 10000 }
-        );
-        const repos = JSON.parse(resp) as Array<{ name: string; clone_url: string }>;
-        for (const repo of repos) {
-          if (!repo.name.startsWith("colapip-")) continue;
-          const pluginName = repo.name.slice("colapip-".length);
-          const targetDir = path.join(PLUGINS_DIR, pluginName);
-          if (fs.existsSync(targetDir)) continue;
-          logger.info(`${pluginName}: cloning ${repo.clone_url}...`, "plugin-manager");
-          try {
-            execSync(`git clone ${repo.clone_url} "${targetDir}"`, { stdio: "inherit" });
-          } catch (e) {
-            logger.error(`${pluginName}: clone failed — ${(e as Error).message}`, "plugin-manager");
-          }
-        }
-      } catch (e) {
-        logger.warn(`Plugin registry ${owner}: ${(e as Error).message}`, "plugin-manager");
-      }
-    }
-
     for (const dir of fs.readdirSync(PLUGINS_DIR)) {
       const pluginDir = path.join(PLUGINS_DIR, dir);
       if (!fs.statSync(pluginDir).isDirectory()) continue;
@@ -586,6 +556,48 @@ class PluginManager {
     });
   }
 
+  /** List available plugins from registries (not yet installed) */
+  listAvailable(): Array<{ name: string; repo: string; description: string }> {
+    const cfg = loadConfig();
+    const sources: string[] = cfg.pluginRegistry
+      ? (Array.isArray(cfg.pluginRegistry) ? cfg.pluginRegistry : [cfg.pluginRegistry])
+      : [];
+    const available: Array<{ name: string; repo: string; description: string }> = [];
+    for (const src of sources) {
+      const owner = src.replace(/^https?:\/\/github\.com\//, "").replace(/\/$/, "");
+      try {
+        const resp = execSync(
+          `curl -sL "https://api.github.com/users/${owner}/repos?per_page=100"`,
+          { encoding: "utf-8", timeout: 10000 }
+        );
+        const repos = JSON.parse(resp) as Array<{ name: string; clone_url: string; description: string | null }>;
+        for (const repo of repos) {
+          if (!repo.name.startsWith("colapip-")) continue;
+          const pluginName = repo.name.slice("colapip-".length);
+          if (this.plugins.has(pluginName)) continue;
+          if (fs.existsSync(path.join(PLUGINS_DIR, pluginName))) continue;
+          available.push({ name: pluginName, repo: repo.clone_url, description: repo.description || "" });
+        }
+      } catch { /* registry unreachable, skip */ }
+    }
+    return available;
+  }
+
+  /** Install a plugin from a git URL */
+  async installPlugin(repoUrl: string, name: string): Promise<{ ok: boolean; error?: string }> {
+    const targetDir = path.join(PLUGINS_DIR, name);
+    if (fs.existsSync(targetDir)) return { ok: false, error: "插件目录已存在" };
+    try {
+      execSync(`git clone ${repoUrl} "${targetDir}"`, { stdio: "inherit" });
+    } catch (e) {
+      return { ok: false, error: `clone 失败: ${(e as Error).message}` };
+    }
+    // Now register
+    await this.scanAndRegister();
+    if (!this.plugins.has(name)) return { ok: false, error: "下载成功但加载失败，查看日志" };
+    return { ok: true };
+  }
+
   /** Hot-reload a single plugin without restarting the platform */
   async reloadPlugin(name: string): Promise<{ ok: boolean; error?: string }> {
     const old = this.plugins.get(name);
@@ -595,24 +607,8 @@ class PluginManager {
       this.pluginConfigs.delete(name);
     }
 
-    let pluginDir = path.join(PLUGINS_DIR, name);
-    if (!fs.existsSync(pluginDir)) {
-      // Try clone from plugin registries
-      const cfg = loadConfig();
-      const sources: string[] = cfg.pluginRegistry
-        ? (Array.isArray(cfg.pluginRegistry) ? cfg.pluginRegistry : [cfg.pluginRegistry])
-        : [];
-      for (const src of sources) {
-        const owner = src.replace(/^https?:\/\/github\.com\//, "").replace(/\/$/, "");
-        const repoUrl = `https://github.com/${owner}/colapip-${name}`;
-        logger.info(`${name}: trying ${repoUrl}...`, "plugin-manager");
-        try {
-          execSync(`git clone ${repoUrl} "${pluginDir}"`, { stdio: "inherit" });
-          break;
-        } catch { /* try next source */ }
-      }
-      if (!fs.existsSync(pluginDir)) return { ok: false, error: `插件目录不存在: ${pluginDir}` };
-    }
+    const pluginDir = path.join(PLUGINS_DIR, name);
+    if (!fs.existsSync(pluginDir)) return { ok: false, error: `插件目录不存在: ${pluginDir}` };
     const configPath = path.join(pluginDir, "plugin.json");
     if (!fs.existsSync(configPath)) return { ok: false, error: "缺少 plugin.json" };
 

@@ -464,6 +464,9 @@ export function startDashboard() {
     },
   );
 
+  // Optimistic: assume LLM is available; first failed chat() will flip to offline
+  getPlatformLLM().setStatus("online");
+
   const { port, host } = config.dashboard;
   server.listen(port, host, () => {
     logger.info(`Dashboard: http://${host}:${port}`, "dashboard");

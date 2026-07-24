@@ -220,4 +220,5 @@ async function fetchHistory(){
 function esc(s){ return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 function jesc(s){ return (s||'').replace(/\\/g,'\\\\').replace(/'/g,"\\'"); }
 loadState();
+setInterval(loadState, 120000);
 </script>

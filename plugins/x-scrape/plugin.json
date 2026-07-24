@@ -3,5 +3,6 @@
   "version": "1.0.0",
   "description": "X.com 无限循环图片爬取器 — 浏览器自动化 + LLM 判断",
   "usesPiAgent": true,
-  "skills": []
+  "skills": [],
+  "cliDeps": ["agent-browser"]
 }

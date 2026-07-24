@@ -14,6 +14,7 @@ export const DATA_DIR = path.join(ROOT, "data");
 const ASSETS_DIR = path.join(DATA_DIR, "assets");
 export const SKILLS_DIR = path.join(ROOT, "src", "platform-skills");
 export const DB_PATH = path.join(ROOT, "db", "platform.db");
+export const PLUGINS_MANIFEST = path.join(ROOT, "config", "plugins.json");
 
 // ============================================================================
 // Types

@@ -180,8 +180,6 @@ async function checkHealth() {
   try {
     const r = await fetch("/api/health"); const d = await r.json();
     const ok = d.llm === "online";
-    document.getElementById("llm-dot").className = "dot " + (ok ? "online" : "offline");
-    document.getElementById("llm-text").textContent = ok ? "LLM 在线" : "LLM 离线";
     document.getElementById("llm-ind").className = "indicator " + (ok ? "ok" : "off");
     document.getElementById("llm-label").textContent = ok ? "在线" : "离线";
     // Queue indicator

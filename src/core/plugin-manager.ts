@@ -2,9 +2,10 @@
 // Plugin Manager — registration, validation, lifecycle, task dispatch, recovery
 // ============================================================================
 
+import { execSync } from "child_process";
 import fs from "fs-extra";
 import path from "path";
-import { PLUGINS_DIR, SKILLS_DIR, ROOT, loadConfig, type PlatformConfig } from "./config.js";
+import { PLUGINS_DIR, PLUGINS_MANIFEST, SKILLS_DIR, ROOT, loadConfig, type PlatformConfig } from "./config.js";
 import {
   createTask, updateTaskState, getPendingAndRunningTasks, getAllTasks, getTaskById,
   createAsset, deleteTask, type TaskRow,
@@ -138,9 +139,22 @@ class PluginManager {
   // ============================================================================
 
   async scanAndRegister(): Promise<void> {
-    if (!fs.existsSync(PLUGINS_DIR)) {
-      logger.warn("Plugins directory not found", "plugin-manager");
-      return;
+    fs.ensureDirSync(PLUGINS_DIR);
+
+    // Clone missing plugin repos from manifest
+    if (fs.existsSync(PLUGINS_MANIFEST)) {
+      const manifest = fs.readJSONSync(PLUGINS_MANIFEST) as Array<{ name: string; repo?: string }>;
+      for (const entry of manifest) {
+        const targetDir = path.join(PLUGINS_DIR, entry.name);
+        if (fs.existsSync(targetDir)) continue;
+        if (!entry.repo) { logger.warn(`Skipping ${entry.name}: no repo`, "plugin-manager"); continue; }
+        logger.info(`${entry.name}: cloning ${entry.repo}...`, "plugin-manager");
+        try {
+          execSync(`git clone ${entry.repo} "${targetDir}"`, { stdio: "inherit" });
+        } catch (e) {
+          logger.error(`${entry.name}: clone failed — ${(e as Error).message}`, "plugin-manager");
+        }
+      }
     }
 
     for (const dir of fs.readdirSync(PLUGINS_DIR)) {
@@ -199,6 +213,25 @@ class PluginManager {
         if (!toolRegistry.get(s)) {
           logger.warn(`Skipping ${name}: depends on tool "${s}" which is not in registry`, "plugin-manager");
           skillMissing = true;
+        }
+      }
+      if (skillMissing) continue;
+
+      // Resolve CLI dependencies (auto-install from npm if missing)
+      const cliDeps = (pconfig.cliDeps as string[]) ?? [];
+      for (const dep of cliDeps) {
+        const whichCmd = process.platform === "win32" ? "where" : "which";
+        try {
+          execSync(`${whichCmd} ${dep}`, { stdio: "ignore" });
+        } catch {
+          logger.warn(`${dep} 未安装，正在自动安装...`, "plugin-manager");
+          try {
+            execSync(`npm install -g ${dep}`, { stdio: "inherit" });
+            logger.info(`${dep} 安装完成`, "plugin-manager");
+          } catch (e) {
+            logger.error(`Skipping ${name}: ${dep} 安装失败 — ${(e as Error).message}`, "plugin-manager");
+            skillMissing = true; // reuse skip flag
+          }
         }
       }
       if (skillMissing) continue;
@@ -548,8 +581,23 @@ class PluginManager {
       this.pluginConfigs.delete(name);
     }
 
-    const pluginDir = path.join(PLUGINS_DIR, name);
-    if (!fs.existsSync(pluginDir)) return { ok: false, error: `插件目录不存在: ${pluginDir}` };
+    let pluginDir = path.join(PLUGINS_DIR, name);
+    if (!fs.existsSync(pluginDir)) {
+      // Try clone from manifest
+      if (fs.existsSync(PLUGINS_MANIFEST)) {
+        const manifest = fs.readJSONSync(PLUGINS_MANIFEST) as Array<{ name: string; repo?: string }>;
+        const entry = manifest.find(e => e.name === name);
+        if (entry?.repo) {
+          logger.info(`${name}: cloning ${entry.repo}...`, "plugin-manager");
+          try {
+            execSync(`git clone ${entry.repo} "${pluginDir}"`, { stdio: "inherit" });
+          } catch (e) {
+            return { ok: false, error: `clone 失败: ${(e as Error).message}` };
+          }
+        }
+      }
+      if (!fs.existsSync(pluginDir)) return { ok: false, error: `插件目录不存在: ${pluginDir}` };
+    }
     const configPath = path.join(pluginDir, "plugin.json");
     if (!fs.existsSync(configPath)) return { ok: false, error: "缺少 plugin.json" };
 
@@ -558,6 +606,23 @@ class PluginManager {
       if (!pconfig.usesPiAgent) return { ok: false, error: "必须声明 usesPiAgent: true" };
       if (!fs.existsSync(path.join(pluginDir, "INPUT.md"))) return { ok: false, error: "缺少 INPUT.md" };
       if (!fs.existsSync(path.join(pluginDir, "OUTPUT.md"))) return { ok: false, error: "缺少 OUTPUT.md" };
+
+      // Resolve CLI dependencies
+      const cliDeps = (pconfig.cliDeps as string[]) ?? [];
+      for (const dep of cliDeps) {
+        const whichCmd = process.platform === "win32" ? "where" : "which";
+        try {
+          execSync(`${whichCmd} ${dep}`, { stdio: "ignore" });
+        } catch {
+          logger.warn(`${dep} 未安装，正在自动安装...`, "plugin-manager");
+          try {
+            execSync(`npm install -g ${dep}`, { stdio: "inherit" });
+            logger.info(`${dep} 安装完成`, "plugin-manager");
+          } catch (e) {
+            return { ok: false, error: `${dep} 安装失败: ${(e as Error).message}` };
+          }
+        }
+      }
 
       const indexPath = path.join(pluginDir, "index.ts");
       const importUrl = "file://" + indexPath.replace(/\\/g, "/") + "?t=" + Date.now();
